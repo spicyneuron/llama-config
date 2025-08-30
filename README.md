@@ -6,11 +6,18 @@ This lightweight proxy sits between your LLM clients and servers, automatically 
 
 ## Usage
 
-Configure your clients to point to the proxy, then configure the proxy to point to your LLM servers. The proxy applies the first matching model's configuration to each request.
-
 ```sh
-# Check example.config.yml for format
+# Install to $GOPATH/bin
+go install github.com/spicyneuron/llama-config@latest
+
+# Download the config and configure your models and server (llama.cpp, mlx_lm.server, etc)
+curl -o config.yml https://raw.githubusercontent.com/spicyneuron/llama-config/main/example.config.yml
+
+# Start the proxy
 llama-config -c config.yml
+
+# The proxy will automatically apply the correct config to each request
+# based on the model name in the request body.
 ```
 
 ## Development
