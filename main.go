@@ -282,7 +282,6 @@ func matchesEndpoint(path string, endpoints interface{}) bool {
 }
 
 func applyModelOverrides(data map[string]interface{}, model string, overrides []ModelOverride) (bool, map[string]interface{}) {
-	modified := false
 	appliedOverrides := make(map[string]interface{})
 	for _, override := range overrides {
 		if matchesModel(model, override) {
@@ -290,10 +289,10 @@ func applyModelOverrides(data map[string]interface{}, model string, overrides []
 				data[key] = value
 				appliedOverrides[key] = value
 			}
-			modified = true
+			return true, appliedOverrides
 		}
 	}
-	return modified, appliedOverrides
+	return false, appliedOverrides
 }
 
 func matchesModel(model string, override ModelOverride) bool {
