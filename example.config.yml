@@ -15,6 +15,8 @@ match:
     endpoints:
       - /v1/chat/completions
       - /chat/completions
+
+    # models: supports one or many regex patterns. First match is applied.
     overrides:
       - models: deepseek-?v3
         params:
