@@ -1,0 +1,29 @@
+# Proxy configuration
+proxy:
+  listen: "localhost:8080"
+  target: "http://localhost:11434"
+  timeout: 30s
+
+# Model overrides
+models:
+  - match: "gemma3*"
+    params:
+      temperature: 1.0
+      top_k: 64
+      top_p: 0.95
+      min_p: 0
+
+  - match: "qwen3-coder"
+    params:
+      temperature: 0.7
+      top_k: 20
+      top_p: 0.8
+      min_p: 0
+      repeat_penalty: 1.05
+
+  - match: "qwen3-*"
+    params:
+      temperature: 0.6
+      top_k: 20
+      top_p: 0.95
+      min_p: 0
