@@ -10,15 +10,18 @@ This lightweight proxy sits between your LLM clients and servers, automatically 
 # Install to $GOPATH/bin
 go install github.com/spicyneuron/llama-config@latest
 
-# Download the config and configure your models and server (llama.cpp, mlx_lm.server, etc)
+# Configure your server (llama.cpp, mlx_lm.server, etc) and model settings
 curl -o config.yml https://raw.githubusercontent.com/spicyneuron/llama-config/main/example.config.yml
 
 # Start the proxy
 llama-config -c config.yml
-
-# The proxy will automatically apply the correct config to each request
-# based on the model name in the request body.
 ```
+
+**Notes:**
+
+- The proxy will automatically apply the correct config to each request based on the model name in the request body.
+- First match wins, so order your rules from specific to general.
+- Supports SSL termination (works great with [mkcert](https://github.com/FiloSottile/mkcert)).
 
 ## Development
 
