@@ -1,14 +1,16 @@
-# LLM Config Proxy
+# Llama Config
 
-Managing local LLMs is a pain. Each model's recommended parameters differ, yet each client need to be configured separately.
+Managing multiple local LLMs can be a pain. Each model has different optimal parameters, but configuring every client individually is tedious.
 
-This simple, lightweight proxy sits in between your LLM client(s) and server(s),dutifully applying your preferred configuration to each model.
+This lightweight proxy sits between your LLM clients and servers, automatically applying your preferred settings to each request.
 
 ## Usage
 
+Configure your clients to point to the proxy, then configure the proxy to point to your LLM servers. The proxy applies the first matching model's configuration to each request.
+
 ```sh
 # Check example.config.yml for format
-llm-config-proxy -c config.yml
+llama-config -c config.yml
 ```
 
 ## Development

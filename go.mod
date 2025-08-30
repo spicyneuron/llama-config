@@ -1,4 +1,4 @@
-module llm-config-proxy
+module llama-config
 
 go 1.25.0
 
