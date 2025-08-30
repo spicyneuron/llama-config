@@ -139,13 +139,24 @@ func logDebug(format string, args ...interface{}) {
 
 func main() {
 	var configFile string
-	flag.StringVar(&configFile, "config", "", "Path to YAML configuration file")
-	flag.StringVar(&configFile, "c", "", "Path to YAML configuration file")
+	flag.StringVar(&configFile, "config", "", "Path to YAML configuration file (required)")
+	flag.StringVar(&configFile, "c", "", "Path to YAML configuration file (required)")
+
+	flag.Usage = func() {
+		fmt.Println("llama-config: Automatically apply optimal settings to LLM requests")
+		fmt.Println()
+		fmt.Println("Usage: llama-config --config <config.yml>")
+		fmt.Println()
+		flag.PrintDefaults()
+		fmt.Println()
+		fmt.Println("For more information and examples, visit:")
+		fmt.Println("  https://github.com/spicyneuron/llama-config")
+	}
+
 	flag.Parse()
 
 	if configFile == "" {
-		fmt.Println("Usage: llm-config-proxy --config <config.yml> or llm-config-proxy -c <config.yml>")
-		fmt.Println("  -c, --config string    Path to YAML configuration file")
+		flag.Usage()
 		os.Exit(1)
 	}
 
@@ -180,15 +191,13 @@ func main() {
 	}
 
 	listenAddr := config.Proxy.Listen
-	log.Printf("Proxy server running on %s", listenAddr)
-	log.Printf("Forwarding to: %s", config.Proxy.Target)
-
 	server := createServer(listenAddr, proxy, config)
 
 	if config.Proxy.SSLCert != "" && config.Proxy.SSLKey != "" {
-		log.Printf("Starting HTTPS server with SSL cert: %s", config.Proxy.SSLCert)
+		log.Printf("Proxying https://%s to %s", listenAddr, config.Proxy.Target)
 		log.Fatalf("HTTPS server failed: %v", server.ListenAndServeTLS(config.Proxy.SSLCert, config.Proxy.SSLKey))
 	} else {
+		log.Printf("Proxying http://%s to %s", listenAddr, config.Proxy.Target)
 		log.Fatalf("HTTP server failed: %v", server.ListenAndServe())
 	}
 }
@@ -265,7 +274,7 @@ func modifyRequest(req *http.Request, config *Config) {
 
 	if modified {
 		overridesJSON, _ := json.MarshalIndent(appliedOverrides, "", "  ")
-		logDebug("Modified request for model '%s' with overrides:\n%s", model, string(overridesJSON))
+		logDebug("Updating request for model '%s' with:\n%s", model, string(overridesJSON))
 	}
 }
 
