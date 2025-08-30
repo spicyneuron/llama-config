@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -28,6 +29,8 @@ type ProxyConfig struct {
 	Listen  string        `yaml:"listen"`
 	Target  string        `yaml:"target"`
 	Timeout time.Duration `yaml:"timeout"`
+	SSLCert string        `yaml:"ssl_cert"`
+	SSLKey  string        `yaml:"ssl_key"`
 }
 
 type MatchRule struct {
@@ -81,6 +84,14 @@ func main() {
 
 	proxy := httputil.NewSingleHostReverseProxy(targetURL)
 
+	if config.Proxy.Timeout > 0 {
+		proxy.Transport = &http.Transport{
+			TLSHandshakeTimeout:   config.Proxy.Timeout,
+			ResponseHeaderTimeout: config.Proxy.Timeout,
+		}
+		log.Printf("Configured timeout: %v", config.Proxy.Timeout)
+	}
+
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
 		originalDirector(req)
@@ -90,7 +101,42 @@ func main() {
 	listenAddr := config.Proxy.Listen
 	log.Printf("Proxy server running on %s", listenAddr)
 	log.Printf("Forwarding to: %s", config.Proxy.Target)
-	log.Fatalf("Server failed: %v", http.ListenAndServe(listenAddr, proxy))
+
+	// Start server with SSL support if certificates are provided
+	if config.Proxy.SSLCert != "" && config.Proxy.SSLKey != "" {
+		log.Printf("Starting HTTPS server with SSL cert: %s", config.Proxy.SSLCert)
+		cert, err := tls.LoadX509KeyPair(config.Proxy.SSLCert, config.Proxy.SSLKey)
+		if err != nil {
+			log.Fatalf("Failed to load SSL certificates: %v", err)
+		}
+
+		server := &http.Server{
+			Addr:    listenAddr,
+			Handler: proxy,
+			TLSConfig: &tls.Config{
+				Certificates: []tls.Certificate{cert},
+			},
+		}
+
+		if config.Proxy.Timeout > 0 {
+			server.ReadTimeout = config.Proxy.Timeout
+			server.WriteTimeout = config.Proxy.Timeout
+		}
+
+		log.Fatalf("HTTPS server failed: %v", server.ListenAndServeTLS("", ""))
+	} else {
+		server := &http.Server{
+			Addr:    listenAddr,
+			Handler: proxy,
+		}
+
+		if config.Proxy.Timeout > 0 {
+			server.ReadTimeout = config.Proxy.Timeout
+			server.WriteTimeout = config.Proxy.Timeout
+		}
+
+		log.Fatalf("HTTP server failed: %v", server.ListenAndServe())
+	}
 }
 
 // Request modification
