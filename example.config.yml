@@ -3,10 +3,10 @@ proxy:
   listen: "localhost:8081"
   target: "http://localhost:8080"
 
-  # Optional
-  timeout: 30s
-  ssl_cert: certificate.pem
-  ssl_key: key.pem
+  # timeout: 30s
+  # ssl_cert: certificate.pem
+  # ssl_key: key.pem
+  # debug: true
 
 # Overrides
 match:
@@ -16,20 +16,30 @@ match:
       - /v1/chat/completions
       - /chat/completions
     overrides:
-      - models: gemma3.*
+      - models: gemma-?3
         params:
-          temperature: 1.0
+          temperature: 1
           top_k: 64
           top_p: 0.95
           min_p: 0
-      - models: qwen3-coder
+      - models: glm-?4
+        params:
+          temperature: 0.6
+          top_p: 1
+      - models: gpt-oss
+        params:
+          temperature: 1
+          top_k: 0
+          top_p: 1
+          min_p: 0
+      - models: qwen-?3-coder
         params:
           temperature: 0.7
           top_k: 20
           top_p: 0.8
           min_p: 0
           repeat_penalty: 1.05
-      - match: qwen3-.*
+      - models: qwen-?3
         params:
           temperature: 0.6
           top_k: 20

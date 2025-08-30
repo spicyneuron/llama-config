@@ -19,9 +19,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Configuration structures
 type Config struct {
-	Proxy ProxyConfig  `yaml:"proxy"`
+	Proxy ProxyConfig `yaml:"proxy"`
 	Match []MatchRule `yaml:"match"`
 }
 
@@ -31,6 +30,7 @@ type ProxyConfig struct {
 	Timeout time.Duration `yaml:"timeout"`
 	SSLCert string        `yaml:"ssl_cert"`
 	SSLKey  string        `yaml:"ssl_key"`
+	Debug   bool          `yaml:"debug"`
 }
 
 type MatchRule struct {
@@ -44,7 +44,12 @@ type ModelOverride struct {
 	Params map[string]interface{} `yaml:"params"`
 }
 
-// Configuration loading
+// =============================================================================
+// Configuration
+// =============================================================================
+
+var debugMode bool
+
 func loadConfig(configPath string) (*Config, error) {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
@@ -56,8 +61,64 @@ func loadConfig(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
+	if err := validateConfig(&config); err != nil {
+		return nil, fmt.Errorf("config validation failed: %w", err)
+	}
+
+	if config.Proxy.Timeout == 0 {
+		config.Proxy.Timeout = 60 * time.Second
+	}
+
 	return &config, nil
 }
+
+func validateConfig(config *Config) error {
+	if config.Proxy.Listen == "" {
+		return fmt.Errorf("proxy.listen is required")
+	}
+	if config.Proxy.Target == "" {
+		return fmt.Errorf("proxy.target is required")
+	}
+
+	if _, err := url.Parse(config.Proxy.Target); err != nil {
+		return fmt.Errorf("invalid proxy.target URL: %w", err)
+	}
+
+	if (config.Proxy.SSLCert != "" && config.Proxy.SSLKey == "") ||
+		(config.Proxy.SSLCert == "" && config.Proxy.SSLKey != "") {
+		return fmt.Errorf("both ssl_cert and ssl_key must be provided together")
+	}
+
+	for i, rule := range config.Match {
+		if rule.Methods == nil {
+			return fmt.Errorf("match rule %d: methods is required", i)
+		}
+		if rule.Endpoints == nil {
+			return fmt.Errorf("match rule %d: endpoints is required", i)
+		}
+		if len(rule.Overrides) == 0 {
+			return fmt.Errorf("match rule %d: at least one override is required", i)
+		}
+
+		for j, override := range rule.Overrides {
+			if override.Models == nil && override.Params == nil {
+				return fmt.Errorf("match rule %d, override %d: either models or params must be specified", i, j)
+			}
+		}
+	}
+
+	return nil
+}
+
+func logDebug(format string, args ...interface{}) {
+	if debugMode {
+		log.Printf("[DEBUG] "+format, args...)
+	}
+}
+
+// =============================================================================
+// Server & Main
+// =============================================================================
 
 func main() {
 	var configFile string
@@ -75,6 +136,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
+
+	debugMode = config.Proxy.Debug
 	log.Printf("Loaded config from: %s", configFile)
 
 	targetURL, err := url.Parse(config.Proxy.Target)
@@ -94,6 +157,7 @@ func main() {
 
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
+		log.Printf("%s %s", req.Method, req.URL.Path)
 		originalDirector(req)
 		modifyRequest(req, config)
 	}
@@ -102,44 +166,42 @@ func main() {
 	log.Printf("Proxy server running on %s", listenAddr)
 	log.Printf("Forwarding to: %s", config.Proxy.Target)
 
-	// Start server with SSL support if certificates are provided
+	server := createServer(listenAddr, proxy, config)
+
 	if config.Proxy.SSLCert != "" && config.Proxy.SSLKey != "" {
 		log.Printf("Starting HTTPS server with SSL cert: %s", config.Proxy.SSLCert)
-		cert, err := tls.LoadX509KeyPair(config.Proxy.SSLCert, config.Proxy.SSLKey)
-		if err != nil {
-			log.Fatalf("Failed to load SSL certificates: %v", err)
-		}
-
-		server := &http.Server{
-			Addr:    listenAddr,
-			Handler: proxy,
-			TLSConfig: &tls.Config{
-				Certificates: []tls.Certificate{cert},
-			},
-		}
-
-		if config.Proxy.Timeout > 0 {
-			server.ReadTimeout = config.Proxy.Timeout
-			server.WriteTimeout = config.Proxy.Timeout
-		}
-
-		log.Fatalf("HTTPS server failed: %v", server.ListenAndServeTLS("", ""))
+		log.Fatalf("HTTPS server failed: %v", server.ListenAndServeTLS(config.Proxy.SSLCert, config.Proxy.SSLKey))
 	} else {
-		server := &http.Server{
-			Addr:    listenAddr,
-			Handler: proxy,
-		}
-
-		if config.Proxy.Timeout > 0 {
-			server.ReadTimeout = config.Proxy.Timeout
-			server.WriteTimeout = config.Proxy.Timeout
-		}
-
 		log.Fatalf("HTTP server failed: %v", server.ListenAndServe())
 	}
 }
 
-// Request modification
+func createServer(addr string, handler http.Handler, config *Config) *http.Server {
+	server := &http.Server{
+		Addr:    addr,
+		Handler: handler,
+	}
+
+	if config.Proxy.SSLCert != "" && config.Proxy.SSLKey != "" {
+		cert, err := tls.LoadX509KeyPair(config.Proxy.SSLCert, config.Proxy.SSLKey)
+		if err != nil {
+			log.Fatalf("Failed to load SSL certificates: %v", err)
+		}
+		server.TLSConfig = &tls.Config{
+			Certificates: []tls.Certificate{cert},
+		}
+	}
+
+	server.ReadTimeout = config.Proxy.Timeout
+	server.WriteTimeout = config.Proxy.Timeout
+
+	return server
+}
+
+// =============================================================================
+// Request Processing & Matching
+// =============================================================================
+
 func modifyRequest(req *http.Request, config *Config) {
 	matchingRule := findMatchingRule(req, config)
 	if matchingRule == nil {
@@ -152,6 +214,12 @@ func modifyRequest(req *http.Request, config *Config) {
 		return
 	}
 	req.Body.Close()
+
+	if debugMode && len(body) > 0 {
+		var prettyJSON bytes.Buffer
+		json.Indent(&prettyJSON, body, "", "  ")
+		logDebug("Inbound request body:\n%s", prettyJSON.String())
+	}
 
 	var data map[string]interface{}
 	if err := json.Unmarshal(body, &data); err != nil {
@@ -166,7 +234,7 @@ func modifyRequest(req *http.Request, config *Config) {
 		return
 	}
 
-	modified := applyModelOverrides(data, model, matchingRule.Overrides)
+	modified, appliedOverrides := applyModelOverrides(data, model, matchingRule.Overrides)
 
 	modifiedBody, err := json.Marshal(data)
 	if err != nil {
@@ -179,11 +247,11 @@ func modifyRequest(req *http.Request, config *Config) {
 	req.ContentLength = int64(len(modifiedBody))
 
 	if modified {
-		log.Printf("Modified request for model: %s", model)
+		overridesJSON, _ := json.MarshalIndent(appliedOverrides, "", "  ")
+		logDebug("Modified request for model '%s' with overrides:\n%s", model, string(overridesJSON))
 	}
 }
 
-// Helper functions
 func findMatchingRule(req *http.Request, config *Config) *MatchRule {
 	for _, rule := range config.Match {
 		if matchesMethod(req.Method, rule.Methods) && matchesEndpoint(req.URL.Path, rule.Endpoints) {
@@ -213,17 +281,19 @@ func matchesEndpoint(path string, endpoints interface{}) bool {
 	return false
 }
 
-func applyModelOverrides(data map[string]interface{}, model string, overrides []ModelOverride) bool {
+func applyModelOverrides(data map[string]interface{}, model string, overrides []ModelOverride) (bool, map[string]interface{}) {
 	modified := false
+	appliedOverrides := make(map[string]interface{})
 	for _, override := range overrides {
 		if matchesModel(model, override) {
 			for key, value := range override.Params {
 				data[key] = value
+				appliedOverrides[key] = value
 			}
 			modified = true
 		}
 	}
-	return modified
+	return modified, appliedOverrides
 }
 
 func matchesModel(model string, override ModelOverride) bool {
@@ -250,8 +320,6 @@ func convertToStringSlice(value interface{}) []string {
 			}
 		}
 		return result
-	case []string:
-		return v
 	default:
 		return []string{}
 	}
