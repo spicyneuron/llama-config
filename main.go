@@ -12,6 +12,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -65,6 +66,10 @@ func loadConfig(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("config validation failed: %w", err)
 	}
 
+	configDir := filepath.Dir(configPath)
+	config.Proxy.SSLCert = resolveSSLPath(config.Proxy.SSLCert, configDir)
+	config.Proxy.SSLKey = resolveSSLPath(config.Proxy.SSLKey, configDir)
+
 	if config.Proxy.Timeout == 0 {
 		config.Proxy.Timeout = 60 * time.Second
 	}
@@ -108,6 +113,18 @@ func validateConfig(config *Config) error {
 	}
 
 	return nil
+}
+
+func resolveSSLPath(sslPath, configDir string) string {
+	if sslPath == "" {
+		return ""
+	}
+
+	if filepath.IsAbs(sslPath) {
+		return sslPath
+	}
+
+	return filepath.Join(configDir, sslPath)
 }
 
 func logDebug(format string, args ...interface{}) {
