@@ -1,4 +1,4 @@
-module llama-config
+module github.com/spicyneuron/llama-config
 
 go 1.25.0
 
