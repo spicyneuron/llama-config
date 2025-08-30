@@ -16,6 +16,14 @@ match:
       - /v1/chat/completions
       - /chat/completions
     overrides:
+      - models: deepseek-?v3
+        params:
+          temperature: 0.6
+          top_p: 0.95
+      - models: deepseek-?r1
+        params:
+          temperature: 0.6
+          top_p: 0.95
       - models: gemma-?3
         params:
           temperature: 1
@@ -32,14 +40,20 @@ match:
           top_k: 0
           top_p: 1
           min_p: 0
-      - models: qwen-?3-coder
+      - models: qwen-?3.*-coder
         params:
           temperature: 0.7
           top_k: 20
           top_p: 0.8
           min_p: 0
           repeat_penalty: 1.05
-      - models: qwen-?3
+      - models: qwen-?3.*-instruct
+        params:
+          temperature: 0.7
+          top_k: 20
+          top_p: 0.8
+          min_p: 0
+      - models: qwen-?3.*-thinking
         params:
           temperature: 0.6
           top_k: 20
