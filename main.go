@@ -41,8 +41,9 @@ type MatchRule struct {
 }
 
 type ModelOverride struct {
-	Models interface{}            `yaml:"models"` // string or []string
-	Params map[string]interface{} `yaml:"params"`
+    Models interface{}            `yaml:"models"` // string or []string
+    All    bool                   `yaml:"all"`
+    Params map[string]interface{} `yaml:"params"`
 }
 
 // =============================================================================
@@ -105,11 +106,14 @@ func validateConfig(config *Config) error {
 			return fmt.Errorf("match rule %d: at least one override is required", i)
 		}
 
-		for j, override := range rule.Overrides {
-			if override.Models == nil && override.Params == nil {
-				return fmt.Errorf("match rule %d, override %d: either models or params must be specified", i, j)
-			}
-		}
+        for j, override := range rule.Overrides {
+            if override.Params == nil {
+                return fmt.Errorf("match rule %d, override %d: params must be specified", i, j)
+            }
+            if override.Models == nil && !override.All {
+                return fmt.Errorf("match rule %d, override %d: either models or all: true must be specified", i, j)
+            }
+        }
 	}
 
 	return nil
@@ -254,11 +258,7 @@ func modifyRequest(req *http.Request, config *Config) {
 		return
 	}
 
-	model, exists := data["model"].(string)
-	if !exists {
-		req.Body = io.NopCloser(bytes.NewReader(body))
-		return
-	}
+    model, _ := data["model"].(string)
 
 	modified, appliedOverrides := applyModelOverrides(data, model, matchingRule.Overrides)
 
@@ -272,10 +272,14 @@ func modifyRequest(req *http.Request, config *Config) {
 	req.Body = io.NopCloser(bytes.NewReader(modifiedBody))
 	req.ContentLength = int64(len(modifiedBody))
 
-	if modified {
-		overridesJSON, _ := json.MarshalIndent(appliedOverrides, "", "  ")
-		logDebug("Updating request for model '%s' with:\n%s", model, string(overridesJSON))
-	}
+    if modified {
+        overridesJSON, _ := json.MarshalIndent(appliedOverrides, "", "  ")
+        if model == "" {
+            logDebug("Updating request with:\n%s", string(overridesJSON))
+        } else {
+            logDebug("Updating request for model '%s' with:\n%s", model, string(overridesJSON))
+        }
+    }
 }
 
 func findMatchingRule(req *http.Request, config *Config) *MatchRule {
@@ -308,17 +312,17 @@ func matchesEndpoint(path string, endpoints interface{}) bool {
 }
 
 func applyModelOverrides(data map[string]interface{}, model string, overrides []ModelOverride) (bool, map[string]interface{}) {
-	appliedOverrides := make(map[string]interface{})
-	for _, override := range overrides {
-		if matchesModel(model, override) {
-			for key, value := range override.Params {
-				data[key] = value
-				appliedOverrides[key] = value
-			}
-			return true, appliedOverrides
-		}
-	}
-	return false, appliedOverrides
+    appliedOverrides := make(map[string]interface{})
+    for _, override := range overrides {
+        if override.All || matchesModel(model, override) {
+            for key, value := range override.Params {
+                data[key] = value
+                appliedOverrides[key] = value
+            }
+            return true, appliedOverrides
+        }
+    }
+    return false, appliedOverrides
 }
 
 func matchesModel(model string, override ModelOverride) bool {

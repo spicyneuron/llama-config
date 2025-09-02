@@ -13,8 +13,7 @@ match:
   - methods:
       - POST
     endpoints:
-      - /v1/chat/completions
-      - /chat/completions
+      - .*/chat/completions
 
     # models: supports one or many regex patterns. First match is applied.
     overrides:
@@ -61,3 +60,16 @@ match:
           top_k: 20
           top_p: 0.95
           min_p: 0
+
+  - methods:
+      - POST
+    endpoints:
+      - .*/infill
+    overrides:
+      - all: true
+        params:
+          temperature: 0.7
+          top_k: 20
+          top_p: 0.8
+          min_p: 0
+          repeat_penalty: 1.05
