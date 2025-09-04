@@ -61,6 +61,11 @@ match:
           top_p: 0.95
           min_p: 0
 
+      # Catch all
+      - all: true
+        params:
+          temperature: 0.5
+
   - methods:
       - POST
     endpoints:

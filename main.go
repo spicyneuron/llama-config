@@ -189,14 +189,14 @@ func main() {
 	)
 
 	flag.Usage = func() {
-		fmt.Println("llama-config: Automatically apply optimal settings to LLM requests")
+		fmt.Println("llama-config-proxy: Automatically apply optimal settings to LLM requests")
 		fmt.Println()
-		fmt.Println("Usage: llama-config --config <config.yml>")
+		fmt.Println("Usage: llama-config-proxy --config <config.yml>")
 		fmt.Println()
 		flag.PrintDefaults()
 		fmt.Println()
 		fmt.Println("For more information and examples, visit:")
-		fmt.Println("  https://github.com/spicyneuron/llama-config")
+		fmt.Println("  https://github.com/spicyneuron/llama-config-proxy")
 	}
 
 	flag.Parse()

@@ -1,4 +1,4 @@
-module github.com/spicyneuron/llama-config
+module github.com/spicyneuron/llama-config-proxy
 
 go 1.25.0
 
