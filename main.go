@@ -25,6 +25,15 @@ type Config struct {
 	Match []MatchRule `yaml:"match"`
 }
 
+type CliOverrides struct {
+	Listen  string
+	Target  string
+	Timeout time.Duration
+	SSLCert string
+	SSLKey  string
+	Debug   bool
+}
+
 type ProxyConfig struct {
 	Listen  string        `yaml:"listen"`
 	Target  string        `yaml:"target"`
@@ -52,7 +61,7 @@ type ModelOverride struct {
 
 var debugMode bool
 
-func loadConfig(configPath string) (*Config, error) {
+func loadConfig(configPath string, overrides CliOverrides) (*Config, error) {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
@@ -63,16 +72,22 @@ func loadConfig(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
-	if err := validateConfig(&config); err != nil {
-		return nil, fmt.Errorf("config validation failed: %w", err)
+	// Apply CLI overrides before validation
+	applyOverrides(&config.Proxy, overrides)
+
+	// Set default timeout if still zero
+	if config.Proxy.Timeout == 0 {
+		config.Proxy.Timeout = 60 * time.Second
 	}
 
+	// Resolve SSL paths relative to config directory
 	configDir := filepath.Dir(configPath)
 	config.Proxy.SSLCert = resolveSSLPath(config.Proxy.SSLCert, configDir)
 	config.Proxy.SSLKey = resolveSSLPath(config.Proxy.SSLKey, configDir)
 
-	if config.Proxy.Timeout == 0 {
-		config.Proxy.Timeout = 60 * time.Second
+	// Validate final merged configuration
+	if err := validateConfig(&config); err != nil {
+		return nil, fmt.Errorf("config validation failed: %w", err)
 	}
 
 	return &config, nil
@@ -119,6 +134,27 @@ func validateConfig(config *Config) error {
 	return nil
 }
 
+func applyOverrides(proxy *ProxyConfig, overrides CliOverrides) {
+	if overrides.Listen != "" {
+		proxy.Listen = overrides.Listen
+	}
+	if overrides.Target != "" {
+		proxy.Target = overrides.Target
+	}
+	if overrides.Timeout > 0 {
+		proxy.Timeout = overrides.Timeout
+	}
+	if overrides.SSLCert != "" {
+		proxy.SSLCert = overrides.SSLCert
+	}
+	if overrides.SSLKey != "" {
+		proxy.SSLKey = overrides.SSLKey
+	}
+	if overrides.Debug {
+		proxy.Debug = overrides.Debug
+	}
+}
+
 func resolveSSLPath(sslPath, configDir string) string {
 	if sslPath == "" {
 		return ""
@@ -142,9 +178,15 @@ func logDebug(format string, args ...interface{}) {
 // =============================================================================
 
 func main() {
-	var configFile string
-	flag.StringVar(&configFile, "config", "", "Path to YAML configuration file (required)")
-	flag.StringVar(&configFile, "c", "", "Path to YAML configuration file (required)")
+	var (
+		configFile = flag.String("config", "", "Path to YAML configuration (required)")
+		listenAddr = flag.String("listen", "", "Address to listen on (ex: localhost:8081)")
+		targetURL  = flag.String("target", "", "Target URL to proxy to (ex: http://localhost:8080)")
+		sslCert    = flag.String("ssl-cert", "", "SSL certificate file (ex: cert.pem)")
+		sslKey     = flag.String("ssl-key", "", "SSL key file (ex: key.pem)")
+		timeout    = flag.Duration("timeout", 0, "Timeout for requests to target (ex: 30s)")
+		debug      = flag.Bool("debug", false, "Print debug logs")
+	)
 
 	flag.Usage = func() {
 		fmt.Println("llama-config: Automatically apply optimal settings to LLM requests")
@@ -159,25 +201,27 @@ func main() {
 
 	flag.Parse()
 
-	if configFile == "" {
+	if *configFile == "" {
 		flag.Usage()
 		os.Exit(1)
 	}
 
-	config, err := loadConfig(configFile)
+	overrides := CliOverrides{*listenAddr, *targetURL, *timeout, *sslCert, *sslKey, *debug}
+
+	config, err := loadConfig(*configFile, overrides)
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
 	debugMode = config.Proxy.Debug
-	log.Printf("Loaded config from: %s", configFile)
+	log.Printf("Loaded config from: %s", *configFile)
 
-	targetURL, err := url.Parse(config.Proxy.Target)
+	targetURLParsed, err := url.Parse(config.Proxy.Target)
 	if err != nil {
 		log.Fatalf("Invalid target server URL: %v", err)
 	}
 
-	proxy := httputil.NewSingleHostReverseProxy(targetURL)
+	proxy := httputil.NewSingleHostReverseProxy(targetURLParsed)
 
 	if config.Proxy.Timeout > 0 {
 		proxy.Transport = &http.Transport{
@@ -194,14 +238,14 @@ func main() {
 		modifyRequest(req, config)
 	}
 
-	listenAddr := config.Proxy.Listen
-	server := createServer(listenAddr, proxy, config)
+	listenAddrFinal := config.Proxy.Listen
+	server := createServer(listenAddrFinal, proxy, config)
 
 	if config.Proxy.SSLCert != "" && config.Proxy.SSLKey != "" {
-		log.Printf("Proxying https://%s to %s", listenAddr, config.Proxy.Target)
+		log.Printf("Proxying https://%s to %s", listenAddrFinal, config.Proxy.Target)
 		log.Fatalf("HTTPS server failed: %v", server.ListenAndServeTLS(config.Proxy.SSLCert, config.Proxy.SSLKey))
 	} else {
-		log.Printf("Proxying http://%s to %s", listenAddr, config.Proxy.Target)
+		log.Printf("Proxying http://%s to %s", listenAddrFinal, config.Proxy.Target)
 		log.Fatalf("HTTP server failed: %v", server.ListenAndServe())
 	}
 }
