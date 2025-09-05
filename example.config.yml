@@ -15,6 +15,9 @@ match:
     endpoints:
       - .*/chat/completions
 
+    # rewrite all matched requests to use this path on the target instead
+    rewrite: /v1/chat/completions
+
     # models: supports one or many regex patterns. First match is applied.
     overrides:
       - models: deepseek-?v3

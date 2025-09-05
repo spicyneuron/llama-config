@@ -46,6 +46,7 @@ type ProxyConfig struct {
 type MatchRule struct {
 	Methods   interface{}     `yaml:"methods"`   // string or []string
 	Endpoints interface{}     `yaml:"endpoints"` // string or []string
+	Rewrite   string          `yaml:"rewrite"`
 	Overrides []ModelOverride `yaml:"overrides"`
 }
 
@@ -119,6 +120,9 @@ func validateConfig(config *Config) error {
 		}
 		if len(rule.Overrides) == 0 {
 			return fmt.Errorf("match rule %d: at least one override is required", i)
+		}
+		if rule.Rewrite != "" && !strings.HasPrefix(rule.Rewrite, "/") {
+			return fmt.Errorf("match rule %d: rewrite path must be absolute (start with '/')", i)
 		}
 
         for j, override := range rule.Overrides {
@@ -280,6 +284,12 @@ func modifyRequest(req *http.Request, config *Config) {
 	matchingRule := findMatchingRule(req, config)
 	if matchingRule == nil {
 		return
+	}
+
+	if matchingRule.Rewrite != "" {
+		originalPath := req.URL.Path
+		req.URL.Path = matchingRule.Rewrite
+		logDebug("Rewrote request path from %s to %s", originalPath, matchingRule.Rewrite)
 	}
 
 	body, err := io.ReadAll(req.Body)
