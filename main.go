@@ -259,7 +259,7 @@ func validateOperation(op *Operation, ruleIndex, opIndex int) error {
 		}
 	}
 
-	if len(op.operations) == 0 && len(op.Merge) == 0 && len(op.Default) == 0 && len(op.Delete) == 0 {
+	if len(op.Merge) == 0 && len(op.Default) == 0 && len(op.Delete) == 0 {
 		return fmt.Errorf("rule %d operation %d: must have at least one action (merge, default, or delete)", ruleIndex, opIndex)
 	}
 
