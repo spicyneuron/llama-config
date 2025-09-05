@@ -1,5 +1,7 @@
-# Proxy configuration
+# Proxy Configuration
 proxy:
+
+  # All proxy options can also be set from CLI flags
   listen: "localhost:8081"
   target: "http://localhost:8080"
 
@@ -8,74 +10,82 @@ proxy:
   # ssl_key: key.pem
   # debug: true
 
-# Overrides
-match:
-  - methods:
-      - POST
-    endpoints:
-      - .*/chat/completions
+# Request Rules
+rules:
 
-    # rewrite all matched requests to use this path on the target instead
-    rewrite: /v1/chat/completions
+  # `methods`, `paths` and `filters` field values are regex patterns. Include a
+  # string or array of strings.
+  - methods: POST
+    paths: .*/chat/completions
 
-    # models: supports one or many regex patterns. First match is applied.
-    overrides:
-      - models: deepseek-?v3
-        params:
+    # Optionally normalize the request path.
+    target_path: /v1/chat/completions
+
+    # First matched operation wins. Each should contain one or more actions
+    # (default, merge, delete) that execute in the order written. Operations
+    # without filters match everything.
+    operations:
+      - filters:
+          model: deepseek-?(v3|r1)
+        merge:
           temperature: 0.6
           top_p: 0.95
-      - models: deepseek-?r1
-        params:
-          temperature: 0.6
-          top_p: 0.95
-      - models: gemma-?3
-        params:
+
+      - filters:
+          model: gemma-?3
+        merge:
           temperature: 1
           top_k: 64
           top_p: 0.95
           min_p: 0
-      - models: glm-?4
-        params:
+
+      - filters:
+          model: glm-?4
+        merge:
           temperature: 0.6
           top_p: 1
-      - models: gpt-oss
-        params:
+
+      - filters:
+          model: gpt-oss
+        merge:
           temperature: 1
           top_k: 0
           top_p: 1
           min_p: 0
-      - models: qwen-?3.*-coder
-        params:
+
+      - filters:
+          model: qwen-?3.*-coder
+        merge:
           temperature: 0.7
           top_k: 20
           top_p: 0.8
           min_p: 0
           repeat_penalty: 1.05
-      - models: qwen-?3.*-instruct
-        params:
+
+      - filters:
+          model: qwen-?3.*-instruct
+        merge:
           temperature: 0.7
           top_k: 20
           top_p: 0.8
           min_p: 0
-      - models: qwen-?3.*-thinking
-        params:
+
+      - filters:
+          model: qwen-?3.*-thinking
+        merge:
           temperature: 0.6
           top_k: 20
           top_p: 0.95
           min_p: 0
 
       # Catch all
-      - all: true
-        params:
+      - merge:
           temperature: 0.5
 
-  - methods:
-      - POST
-    endpoints:
-      - .*/infill
-    overrides:
-      - all: true
-        params:
+  - methods: POST
+    paths: .*/infill
+    operations:
+      - merge:
           temperature: 0.7
           top_k: 20
           top_p: 0.8
