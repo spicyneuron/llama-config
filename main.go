@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -78,86 +79,10 @@ type Rule struct {
 }
 
 type Operation struct {
-	Filters    map[string]PatternField `yaml:"filters"`
-	Merge      map[string]any          `yaml:"merge,omitempty"`
-	Default    map[string]any          `yaml:"default,omitempty"`
-	Delete     []string                `yaml:"delete,omitempty"`
-	operations []operation             // internal field for order preservation
-}
-
-type operation struct {
-	opType string
-	data   any
-}
-
-// UnmarshalYAML implements custom unmarshaling to preserve operation order
-func (o *Operation) UnmarshalYAML(unmarshal func(any) error) error {
-	var node yaml.Node
-	if err := unmarshal(&node); err != nil {
-		return err
-	}
-
-	// Initialize fields
-	o.Filters = make(map[string]PatternField)
-	o.Merge = make(map[string]any)
-	o.Default = make(map[string]any)
-	o.Delete = []string{}
-	o.operations = []operation{}
-
-	// Validate node structure
-	if len(node.Content)%2 != 0 {
-		return fmt.Errorf("invalid rule structure: uneven key-value pairs")
-	}
-
-	// Process node content (key-value pairs)
-	for i := 0; i < len(node.Content); i += 2 {
-		keyNode := node.Content[i]
-		valueNode := node.Content[i+1]
-
-		if keyNode.Value == "" {
-			return fmt.Errorf("empty key found in rule")
-		}
-
-		switch keyNode.Value {
-		case "filters":
-			if err := valueNode.Decode(&o.Filters); err != nil {
-				return fmt.Errorf("failed to decode filters: %w", err)
-			}
-		case "merge":
-			if err := valueNode.Decode(&o.Merge); err != nil {
-				return fmt.Errorf("failed to decode merge: %w", err)
-			}
-			if len(o.Merge) == 0 {
-				return fmt.Errorf("merge operation cannot be empty")
-			}
-			o.operations = append(o.operations, operation{"merge", o.Merge})
-		case "default":
-			if err := valueNode.Decode(&o.Default); err != nil {
-				return fmt.Errorf("failed to decode default: %w", err)
-			}
-			if len(o.Default) == 0 {
-				return fmt.Errorf("default operation cannot be empty")
-			}
-			o.operations = append(o.operations, operation{"default", o.Default})
-		case "delete":
-			if err := valueNode.Decode(&o.Delete); err != nil {
-				return fmt.Errorf("failed to decode delete: %w", err)
-			}
-			if len(o.Delete) == 0 {
-				return fmt.Errorf("delete operation cannot be empty")
-			}
-			for _, key := range o.Delete {
-				if key == "" {
-					return fmt.Errorf("delete operation cannot contain empty keys")
-				}
-			}
-			o.operations = append(o.operations, operation{"delete", o.Delete})
-		default:
-			return fmt.Errorf("unknown rule field: %s", keyNode.Value)
-		}
-	}
-
-	return nil
+	Filters map[string]PatternField `yaml:"filters"`
+	Merge   map[string]any          `yaml:"merge,omitempty"`
+	Default map[string]any          `yaml:"default,omitempty"`
+	Delete  []string                `yaml:"delete,omitempty"`
 }
 
 // =============================================================================
@@ -281,10 +206,8 @@ func validateOperation(op *Operation, ruleIndex, opIndex int) error {
 		}
 	}
 
-	for i, key := range op.Delete {
-		if key == "" {
-			return fmt.Errorf("rule %d operation %d: delete action cannot have empty key at index %d", ruleIndex, opIndex, i)
-		}
+	if slices.Contains(op.Delete, "") {
+		return fmt.Errorf("rule %d operation %d: delete action cannot contain empty keys", ruleIndex, opIndex)
 	}
 
 	return nil
@@ -513,15 +436,14 @@ func processRules(data map[string]any, operations []Operation) (bool, map[string
 
 	for _, op := range operations {
 		if satisfiesFilter(data, op.Filters) {
-			for _, operation := range op.operations {
-				switch operation.opType {
-				case "merge":
-					applyMergeOperation(data, operation, appliedValues)
-				case "default":
-					applyDefaultOperation(data, operation, appliedValues)
-				case "delete":
-					applyDeleteOperation(data, operation, appliedValues)
-				}
+			if len(op.Default) > 0 {
+				applyDefaultOperation(data, op.Default, appliedValues)
+			}
+			if len(op.Merge) > 0 {
+				applyMergeOperation(data, op.Merge, appliedValues)
+			}
+			if len(op.Delete) > 0 {
+				applyDeleteOperation(data, op.Delete, appliedValues)
 			}
 			return true, appliedValues
 		}
@@ -529,51 +451,39 @@ func processRules(data map[string]any, operations []Operation) (bool, map[string
 	return false, appliedValues
 }
 
-func applyMergeOperation(data map[string]any, operation operation, appliedValues map[string]any) {
-	if mergeValues, ok := operation.data.(map[string]any); ok {
-		logDebug("Applying merge operation with %d values", len(mergeValues))
-		for key, value := range mergeValues {
-			originalValue := data[key]
+func applyMergeOperation(data map[string]any, mergeValues map[string]any, appliedValues map[string]any) {
+	logDebug("Applying merge operation with %d values", len(mergeValues))
+	for key, value := range mergeValues {
+		originalValue := data[key]
+		data[key] = value
+		appliedValues[key] = value
+		logDebug("Merged %s: %v -> %v", key, originalValue, value)
+	}
+}
+
+func applyDefaultOperation(data map[string]any, defaultValues map[string]any, appliedValues map[string]any) {
+	logDebug("Applying default operation with %d values", len(defaultValues))
+	for key, value := range defaultValues {
+		if _, exists := data[key]; !exists {
 			data[key] = value
 			appliedValues[key] = value
-			logDebug("Merged %s: %v -> %v", key, originalValue, value)
+			logDebug("Set default %s: %v", key, value)
+		} else {
+			logDebug("Skipped default %s (already exists): %v", key, data[key])
 		}
-	} else {
-		logDebug("Merge operation data type assertion failed")
 	}
 }
 
-func applyDefaultOperation(data map[string]any, operation operation, appliedValues map[string]any) {
-	if defaultValues, ok := operation.data.(map[string]any); ok {
-		logDebug("Applying default operation with %d values", len(defaultValues))
-		for key, value := range defaultValues {
-			if _, exists := data[key]; !exists {
-				data[key] = value
-				appliedValues[key] = value
-				logDebug("Set default %s: %v", key, value)
-			} else {
-				logDebug("Skipped default %s (already exists): %v", key, data[key])
-			}
+func applyDeleteOperation(data map[string]any, deleteKeys []string, appliedValues map[string]any) {
+	logDebug("Applying delete operation for %d keys", len(deleteKeys))
+	for _, key := range deleteKeys {
+		if originalValue, exists := data[key]; exists {
+			delete(data, key)
+			appliedValues[key] = "<deleted>"
+			logDebug("Deleted %s (was: %v)", key, originalValue)
+		} else {
+			logDebug("Skipped delete %s (not found)", key)
 		}
-	} else {
-		logDebug("Default operation data type assertion failed")
-	}
-}
-
-func applyDeleteOperation(data map[string]any, operation operation, appliedValues map[string]any) {
-	if deleteKeys, ok := operation.data.([]string); ok {
-		logDebug("Applying delete operation for %d keys", len(deleteKeys))
-		for _, key := range deleteKeys {
-			if originalValue, exists := data[key]; exists {
-				delete(data, key)
-				appliedValues[key] = "<deleted>"
-				logDebug("Deleted %s (was: %v)", key, originalValue)
-			} else {
-				logDebug("Skipped delete %s (not found)", key)
-			}
-		}
-	} else {
-		logDebug("Delete operation data type assertion failed")
 	}
 }
 

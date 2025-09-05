@@ -21,9 +21,9 @@ rules:
     # Optionally normalize the request path.
     target_path: /v1/chat/completions
 
-    # First matched operation wins. Each should contain one or more actions
-    # (default, merge, delete) that execute in the order written. Operations
-    # without filters match everything.
+    # First matched operation wins. Each should contain one or more actions that
+    # execute in logical order (default -> merge -> delete). Operations without
+    # filters match everything.
     operations:
       - filters:
           model: deepseek-?(v3|r1)
