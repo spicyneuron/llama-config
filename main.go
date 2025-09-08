@@ -83,6 +83,7 @@ type Operation struct {
 	Merge   map[string]any          `yaml:"merge,omitempty"`
 	Default map[string]any          `yaml:"default,omitempty"`
 	Delete  []string                `yaml:"delete,omitempty"`
+	Stop    bool                    `yaml:"stop,omitempty"`
 }
 
 // =============================================================================
@@ -401,7 +402,7 @@ func modifyRequest(req *http.Request, config *Config) {
 
 	if modified {
 		appliedJSON, _ := json.MarshalIndent(appliedValues, "", "  ")
-		logDebug("Applied rules with values:\n%s", string(appliedJSON))
+		logDebug("Applied changes:\n%s", string(appliedJSON))
 	}
 }
 
@@ -433,56 +434,51 @@ func matchesPath(path string, paths PatternField) bool {
 
 func processRules(data map[string]any, operations []Operation) (bool, map[string]any) {
 	appliedValues := make(map[string]any)
+	anyApplied := false
 
 	for _, op := range operations {
 		if satisfiesFilter(data, op.Filters) {
 			if len(op.Default) > 0 {
 				applyDefaultOperation(data, op.Default, appliedValues)
+				anyApplied = true
 			}
 			if len(op.Merge) > 0 {
 				applyMergeOperation(data, op.Merge, appliedValues)
+				anyApplied = true
 			}
 			if len(op.Delete) > 0 {
 				applyDeleteOperation(data, op.Delete, appliedValues)
+				anyApplied = true
 			}
-			return true, appliedValues
+			if op.Stop {
+				break
+			}
 		}
 	}
-	return false, appliedValues
+	return anyApplied, appliedValues
 }
 
 func applyMergeOperation(data map[string]any, mergeValues map[string]any, appliedValues map[string]any) {
-	logDebug("Applying merge operation with %d values", len(mergeValues))
 	for key, value := range mergeValues {
-		originalValue := data[key]
 		data[key] = value
 		appliedValues[key] = value
-		logDebug("Merged %s: %v -> %v", key, originalValue, value)
 	}
 }
 
 func applyDefaultOperation(data map[string]any, defaultValues map[string]any, appliedValues map[string]any) {
-	logDebug("Applying default operation with %d values", len(defaultValues))
 	for key, value := range defaultValues {
 		if _, exists := data[key]; !exists {
 			data[key] = value
 			appliedValues[key] = value
-			logDebug("Set default %s: %v", key, value)
-		} else {
-			logDebug("Skipped default %s (already exists): %v", key, data[key])
 		}
 	}
 }
 
 func applyDeleteOperation(data map[string]any, deleteKeys []string, appliedValues map[string]any) {
-	logDebug("Applying delete operation for %d keys", len(deleteKeys))
 	for _, key := range deleteKeys {
-		if originalValue, exists := data[key]; exists {
+		if _, exists := data[key]; exists {
 			delete(data, key)
 			appliedValues[key] = "<deleted>"
-			logDebug("Deleted %s (was: %v)", key, originalValue)
-		} else {
-			logDebug("Skipped delete %s (not found)", key)
 		}
 	}
 }

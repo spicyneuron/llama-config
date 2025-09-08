@@ -21,10 +21,22 @@ rules:
     # Optionally normalize the request path.
     target_path: /v1/chat/completions
 
-    # First matched operation wins. Each should contain one or more actions that
-    # execute in logical order (default -> merge -> delete). Operations without
-    # filters match everything.
+    # All operations are processed unless a `stop: true` is matched. Operations
+    # without filters always match. Each operation should contain one or more
+    # actions. Within an operation, actions execute in this order: default ->
+    # merge -> delete.
     operations:
+      # Apply to all requests
+      - default:
+          max_tokens: 10000
+
+      # Apply aliases
+      - filters:
+          model: r1
+        merge:
+          model: deepseek-r1
+
+      # Model-specific configurations
       - filters:
           model: deepseek-?(v3|r1)
         merge:
@@ -37,21 +49,17 @@ rules:
           temperature: 1
           top_k: 64
           top_p: 0.95
-          min_p: 0
 
       - filters:
           model: glm-?4
         merge:
           temperature: 0.6
-          top_p: 1
 
       - filters:
           model: gpt-oss
         merge:
           temperature: 1
           top_k: 0
-          top_p: 1
-          min_p: 0
 
       - filters:
           model: qwen-?3.*-coder
@@ -59,7 +67,6 @@ rules:
           temperature: 0.7
           top_k: 20
           top_p: 0.8
-          min_p: 0
           repeat_penalty: 1.05
 
       - filters:
@@ -68,7 +75,6 @@ rules:
           temperature: 0.7
           top_k: 20
           top_p: 0.8
-          min_p: 0
 
       - filters:
           model: qwen-?3.*-thinking
@@ -76,11 +82,6 @@ rules:
           temperature: 0.6
           top_k: 20
           top_p: 0.95
-          min_p: 0
-
-      # Catch all
-      - merge:
-          temperature: 0.5
 
   - methods: POST
     paths: .*/infill
