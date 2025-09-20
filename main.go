@@ -359,6 +359,7 @@ func createServer(addr string, handler http.Handler, config *Config) *http.Serve
 func modifyRequest(req *http.Request, config *Config) {
 	matchingRule := findMatchingRule(req, config)
 	if matchingRule == nil {
+		logDebug("No matching rule for %s %s", req.Method, req.URL.Path)
 		return
 	}
 
