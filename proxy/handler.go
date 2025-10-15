@@ -33,12 +33,22 @@ func logDebug(format string, args ...any) {
 
 // FindMatchingRule returns the first rule that matches the request
 func FindMatchingRule(req *http.Request, cfg *config.Config) *config.Rule {
+	logDebug("Evaluating %d rules for %s %s", len(cfg.Rules), req.Method, req.URL.Path)
+
 	for i := range cfg.Rules {
 		rule := &cfg.Rules[i]
-		if rule.Methods.Matches(req.Method) && rule.Paths.Matches(req.URL.Path) {
+		methodMatch := rule.Methods.Matches(req.Method)
+		pathMatch := rule.Paths.Matches(req.URL.Path)
+
+		logDebug("  Rule %d: methods=%v paths=%v (method_match=%v, path_match=%v)",
+			i, rule.Methods.Patterns, rule.Paths.Patterns, methodMatch, pathMatch)
+
+		if methodMatch && pathMatch {
+			logDebug("  ✓ Rule %d matched!", i)
 			return rule
 		}
 	}
+	logDebug("  No rules matched")
 	return nil
 }
 
@@ -53,6 +63,8 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 	// Store the matching rule in context for response processing
 	ctx := context.WithValue(req.Context(), ruleContextKey, matchingRule)
 	*req = *req.WithContext(ctx)
+
+	logDebug("Processing request with matching rule (on_request ops: %d)", len(matchingRule.OnRequest))
 
 	if matchingRule.TargetPath != "" {
 		originalPath := req.URL.Path
@@ -111,25 +123,30 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 // ModifyResponse processes the response through matching rules
 func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 	contentType := resp.Header.Get("Content-Type")
+	logDebug("Processing response: status=%d, content-type=%s", resp.StatusCode, contentType)
 
 	// Get the rule from context
 	matchingRule, ok := resp.Request.Context().Value(ruleContextKey).(*config.Rule)
 	if !ok || matchingRule == nil {
+		logDebug("No matching rule in context for response")
 		return nil
 	}
 
 	// Skip if no response operations
 	if len(matchingRule.OnResponse) == 0 {
+		logDebug("No response operations defined for this rule")
 		return nil
 	}
 
 	// Route to streaming handler if SSE
 	if strings.Contains(contentType, "text/event-stream") {
+		logDebug("Routing to streaming response handler")
 		return ModifyStreamingResponse(resp, matchingRule)
 	}
 
 	// Skip if not JSON
 	if !strings.Contains(contentType, "application/json") {
+		logDebug("Skipping response modification (not JSON)")
 		return nil
 	}
 
@@ -197,6 +214,7 @@ func ModifyStreamingResponse(resp *http.Response, rule *config.Rule) error {
 
 		scanner := bufio.NewScanner(originalBody)
 		scanner.Buffer(make([]byte, 64*1024), 1024*1024) // 64KB initial, 1MB max line size
+		logDebug("Initialized streaming scanner (max line size: 1MB)")
 
 		// Extract response headers for matching
 		headers := make(map[string]string)
@@ -210,6 +228,11 @@ func ModifyStreamingResponse(resp *http.Response, rule *config.Rule) error {
 		for scanner.Scan() {
 			lineNum++
 			line := scanner.Text()
+
+			// Log every 10 lines to avoid spam
+			if lineNum%10 == 1 {
+				logDebug("Processing streaming line %d", lineNum)
+			}
 
 			// Empty lines are SSE delimiters - pass through
 			if line == "" {

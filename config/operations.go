@@ -77,13 +77,20 @@ func processOperations(data map[string]any, headers map[string]string, operation
 	bodyStrings := toStringMap(data)
 
 	for i, op := range operations {
+		logDebug("  Evaluating operation %d: match_body=%v, match_headers=%v",
+			i, len(op.MatchBody), len(op.MatchHeaders))
+
 		// Check both body and header matching using the same function
 		if !matchesPatterns(bodyStrings, op.MatchBody) || !matchesPatterns(headers, op.MatchHeaders) {
+			logDebug("    Operation %d: skipped (match conditions not met)", i)
 			continue
 		}
 
+		logDebug("    Operation %d: matched, applying transformations...", i)
+
 		// Execute template if present
 		if op.Template != "" && templates[i] != nil {
+			logDebug("      Executing template for operation %d", i)
 			if ExecuteTemplate(templates[i], data, data) {
 				appliedValues["template"] = "<applied>"
 				anyApplied = true
@@ -107,6 +114,7 @@ func processOperations(data map[string]any, headers map[string]string, operation
 		}
 
 		if op.Stop {
+			logDebug("    Operation %d: stop flag encountered, halting processing", i)
 			break
 		}
 	}
@@ -114,6 +122,7 @@ func processOperations(data map[string]any, headers map[string]string, operation
 }
 
 func applyMerge(data map[string]any, mergeValues map[string]any, appliedValues map[string]any) {
+	logDebug("      Merging %d values", len(mergeValues))
 	for key, value := range mergeValues {
 		data[key] = value
 		appliedValues[key] = value
@@ -121,19 +130,23 @@ func applyMerge(data map[string]any, mergeValues map[string]any, appliedValues m
 }
 
 func applyDefault(data map[string]any, defaultValues map[string]any, appliedValues map[string]any) {
+	logDebug("      Applying %d default values", len(defaultValues))
 	for key, value := range defaultValues {
 		if _, exists := data[key]; !exists {
 			data[key] = value
 			appliedValues[key] = value
+			logDebug("        Set default: %s", key)
 		}
 	}
 }
 
 func applyDelete(data map[string]any, deleteKeys []string, appliedValues map[string]any) {
+	logDebug("      Deleting %d keys", len(deleteKeys))
 	for _, key := range deleteKeys {
 		if _, exists := data[key]; exists {
 			delete(data, key)
 			appliedValues[key] = "<deleted>"
+			logDebug("        Deleted: %s", key)
 		}
 	}
 }
@@ -357,11 +370,19 @@ func checkKind(kind string, value any) bool {
 
 // ExecuteTemplate applies a template to input data and updates output
 func ExecuteTemplate(tmpl *template.Template, input map[string]any, output map[string]any) bool {
+	inputKeys := make([]string, 0, len(input))
+	for k := range input {
+		inputKeys = append(inputKeys, k)
+	}
+	logDebug("        Template input keys: %v", inputKeys)
+
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, input); err != nil {
 		log.Printf("Template execution error: %v", err)
 		return false
 	}
+
+	logDebug("        Template output length: %d bytes", buf.Len())
 
 	// Parse the template output as JSON
 	var result map[string]any

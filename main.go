@@ -71,6 +71,7 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
+	config.SetDebugMode(cfg.Proxy.Debug)
 	proxy.SetDebugMode(cfg.Proxy.Debug)
 	if len(configPaths) == 1 {
 		log.Printf("Loaded config from: %s", configPaths[0])
@@ -91,6 +92,10 @@ func main() {
 			ResponseHeaderTimeout: cfg.Proxy.Timeout,
 		}
 		log.Printf("Configured timeout: %v", cfg.Proxy.Timeout)
+		if cfg.Proxy.Debug {
+			log.Printf("[DEBUG] Transport timeouts: TLS handshake=%v, response header=%v",
+				cfg.Proxy.Timeout, cfg.Proxy.Timeout)
+		}
 	}
 
 	originalDirector := reverseProxy.Director
@@ -127,6 +132,10 @@ func createServer(addr string, handler http.Handler, cfg *config.Config) *http.S
 		cert, err := tls.LoadX509KeyPair(cfg.Proxy.SSLCert, cfg.Proxy.SSLKey)
 		if err != nil {
 			log.Fatalf("Failed to load SSL certificates: %v", err)
+		}
+		if cfg.Proxy.Debug {
+			log.Printf("[DEBUG] Loaded SSL certificate from: cert=%s, key=%s",
+				cfg.Proxy.SSLCert, cfg.Proxy.SSLKey)
 		}
 		server.TLSConfig = &tls.Config{
 			Certificates: []tls.Certificate{cert},

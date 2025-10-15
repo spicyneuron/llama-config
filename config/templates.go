@@ -27,6 +27,7 @@ func CompileTemplates(cfg *Config) error {
 				if err != nil {
 					return fmt.Errorf("rule %d request operation %d: %w", i, j, err)
 				}
+				logDebug("Compiled request template for rule %d, operation %d", i, j)
 				opRule.OnRequestTemplates = append(opRule.OnRequestTemplates, tmpl)
 			} else {
 				opRule.OnRequestTemplates = append(opRule.OnRequestTemplates, nil)
@@ -44,6 +45,7 @@ func CompileTemplates(cfg *Config) error {
 				if err != nil {
 					return fmt.Errorf("rule %d response operation %d: %w", i, j, err)
 				}
+				logDebug("Compiled response template for rule %d, operation %d", i, j)
 				opRule.OnResponseTemplates = append(opRule.OnResponseTemplates, tmpl)
 			} else {
 				opRule.OnResponseTemplates = append(opRule.OnResponseTemplates, nil)
