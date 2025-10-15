@@ -23,9 +23,9 @@ rules:
 
     # All operations are processed unless a `stop: true` is matched. Operations
     # without filters always match. Each operation should contain one or more
-    # actions. Within an operation, actions execute in this order: default ->
-    # merge -> delete.
-    operations:
+    # actions. Within an operation, actions execute in this order: template ->
+    # default -> merge -> delete.
+    on_request:
       # Apply to all requests
       - default:
           max_tokens: 10000
@@ -85,7 +85,7 @@ rules:
 
   - methods: POST
     paths: .*/infill
-    operations:
+    on_request:
       - merge:
           temperature: 0.7
           top_k: 20

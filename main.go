@@ -1,261 +1,18 @@
 package main
 
 import (
-	"bytes"
 	"crypto/tls"
-	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
-	"path/filepath"
-	"regexp"
-	"slices"
-	"strings"
-	"time"
 
-	"gopkg.in/yaml.v3"
+	"github.com/spicyneuron/llama-config-proxy/config"
+	"github.com/spicyneuron/llama-config-proxy/proxy"
 )
-
-type Config struct {
-	Proxy ProxyConfig `yaml:"proxy"`
-	Rules []Rule      `yaml:"rules"`
-}
-
-type CliOverrides struct {
-	Listen  string
-	Target  string
-	Timeout time.Duration
-	SSLCert string
-	SSLKey  string
-	Debug   bool
-}
-
-type ProxyConfig struct {
-	Listen  string        `yaml:"listen"`
-	Target  string        `yaml:"target"`
-	Timeout time.Duration `yaml:"timeout"`
-	SSLCert string        `yaml:"ssl_cert"`
-	SSLKey  string        `yaml:"ssl_key"`
-	Debug   bool          `yaml:"debug"`
-}
-
-type PatternField []string
-
-func (p *PatternField) UnmarshalYAML(unmarshal func(any) error) error {
-	var single string
-	if err := unmarshal(&single); err == nil {
-		*p = PatternField{single}
-		return nil
-	}
-
-	var multiple []string
-	if err := unmarshal(&multiple); err == nil {
-		*p = PatternField(multiple)
-		return nil
-	}
-
-	return fmt.Errorf("patterns must be string or []string")
-}
-
-func (p PatternField) Validate() error {
-	for _, pattern := range p {
-		if _, err := regexp.Compile(regexFlags + pattern); err != nil {
-			return fmt.Errorf("invalid regex pattern '%s': %w", pattern, err)
-		}
-	}
-	return nil
-}
-
-type Rule struct {
-	Methods    PatternField `yaml:"methods"`
-	Paths      PatternField `yaml:"paths"`
-	TargetPath string       `yaml:"target_path"`
-	Operations []Operation  `yaml:"operations"`
-}
-
-type Operation struct {
-	Filters map[string]PatternField `yaml:"filters"`
-	Merge   map[string]any          `yaml:"merge,omitempty"`
-	Default map[string]any          `yaml:"default,omitempty"`
-	Delete  []string                `yaml:"delete,omitempty"`
-	Stop    bool                    `yaml:"stop,omitempty"`
-}
-
-// =============================================================================
-// Configuration
-// =============================================================================
-
-var debugMode bool
-
-const regexFlags = "(?i)"
-
-func loadConfig(configPath string, overrides CliOverrides) (*Config, error) {
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %w", err)
-	}
-
-	var config Config
-	if err := yaml.Unmarshal(data, &config); err != nil {
-		return nil, fmt.Errorf("failed to parse config file: %w", err)
-	}
-
-	applyOverrides(&config.Proxy, overrides)
-
-	if config.Proxy.Timeout == 0 {
-		config.Proxy.Timeout = 60 * time.Second
-	}
-
-	configDir := filepath.Dir(configPath)
-	config.Proxy.SSLCert = resolveSSLPath(config.Proxy.SSLCert, configDir)
-	config.Proxy.SSLKey = resolveSSLPath(config.Proxy.SSLKey, configDir)
-
-	if err := validateConfig(&config); err != nil {
-		return nil, fmt.Errorf("config validation failed: %w", err)
-	}
-
-	return &config, nil
-}
-
-func validateConfig(config *Config) error {
-	if config.Proxy.Listen == "" {
-		return fmt.Errorf("proxy.listen is required")
-	}
-	if config.Proxy.Target == "" {
-		return fmt.Errorf("proxy.target is required")
-	}
-
-	if _, err := url.Parse(config.Proxy.Target); err != nil {
-		return fmt.Errorf("invalid proxy.target URL: %w", err)
-	}
-
-	if (config.Proxy.SSLCert != "" && config.Proxy.SSLKey == "") ||
-		(config.Proxy.SSLCert == "" && config.Proxy.SSLKey != "") {
-		return fmt.Errorf("both ssl_cert and ssl_key must be provided together")
-	}
-
-	for i, rule := range config.Rules {
-		if err := validateRule(&rule, i); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func validateRule(rule *Rule, index int) error {
-	if len(rule.Methods) == 0 {
-		return fmt.Errorf("match rule %d: methods required", index)
-	}
-	if len(rule.Paths) == 0 {
-		return fmt.Errorf("match rule %d: paths required", index)
-	}
-	if len(rule.Operations) == 0 {
-		return fmt.Errorf("match rule %d: at least one operation required", index)
-	}
-	if rule.TargetPath != "" && !strings.HasPrefix(rule.TargetPath, "/") {
-		return fmt.Errorf("match rule %d: target_path must be absolute", index)
-	}
-
-	if err := rule.Methods.Validate(); err != nil {
-		return fmt.Errorf("match rule %d methods: %w", index, err)
-	}
-	if err := rule.Paths.Validate(); err != nil {
-		return fmt.Errorf("match rule %d paths: %w", index, err)
-	}
-
-	for opIdx, op := range rule.Operations {
-		if err := validateOperation(&op, index, opIdx); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func validateOperation(op *Operation, ruleIndex, opIndex int) error {
-	for key, patterns := range op.Filters {
-		if err := patterns.Validate(); err != nil {
-			return fmt.Errorf("rule %d operation %d filter '%s': %w", ruleIndex, opIndex, key, err)
-		}
-	}
-
-	if len(op.Merge) == 0 && len(op.Default) == 0 && len(op.Delete) == 0 {
-		return fmt.Errorf("rule %d operation %d: must have at least one action (merge, default, or delete)", ruleIndex, opIndex)
-	}
-
-	for key, value := range op.Merge {
-		if key == "" {
-			return fmt.Errorf("rule %d operation %d: merge action cannot have empty key", ruleIndex, opIndex)
-		}
-		if value == nil {
-			return fmt.Errorf("rule %d operation %d: merge action key '%s' cannot have nil value", ruleIndex, opIndex, key)
-		}
-	}
-
-	for key, value := range op.Default {
-		if key == "" {
-			return fmt.Errorf("rule %d operation %d: default action cannot have empty key", ruleIndex, opIndex)
-		}
-		if value == nil {
-			return fmt.Errorf("rule %d operation %d: default action key '%s' cannot have nil value", ruleIndex, opIndex, key)
-		}
-	}
-
-	if slices.Contains(op.Delete, "") {
-		return fmt.Errorf("rule %d operation %d: delete action cannot contain empty keys", ruleIndex, opIndex)
-	}
-
-	return nil
-}
-
-func applyOverrides(proxy *ProxyConfig, overrides CliOverrides) {
-	if overrides.Listen != "" {
-		proxy.Listen = overrides.Listen
-	}
-	if overrides.Target != "" {
-		proxy.Target = overrides.Target
-	}
-	if overrides.Timeout > 0 {
-		proxy.Timeout = overrides.Timeout
-	}
-	if overrides.SSLCert != "" {
-		proxy.SSLCert = overrides.SSLCert
-	}
-	if overrides.SSLKey != "" {
-		proxy.SSLKey = overrides.SSLKey
-	}
-	if overrides.Debug {
-		proxy.Debug = overrides.Debug
-	}
-}
-
-func resolveSSLPath(sslPath, configDir string) string {
-	if sslPath == "" {
-		return ""
-	}
-
-	if filepath.IsAbs(sslPath) {
-		return sslPath
-	}
-
-	return filepath.Join(configDir, sslPath)
-}
-
-func logDebug(format string, args ...any) {
-	if debugMode {
-		log.Printf("[DEBUG] "+format, args...)
-	}
-}
-
-// =============================================================================
-// Server & Main
-// =============================================================================
 
 func main() {
 	var (
@@ -286,58 +43,70 @@ func main() {
 		os.Exit(1)
 	}
 
-	overrides := CliOverrides{*listenAddr, *targetURL, *timeout, *sslCert, *sslKey, *debug}
+	overrides := config.CliOverrides{
+		Listen:  *listenAddr,
+		Target:  *targetURL,
+		Timeout: *timeout,
+		SSLCert: *sslCert,
+		SSLKey:  *sslKey,
+		Debug:   *debug,
+	}
 
-	config, err := loadConfig(*configFile, overrides)
+	cfg, err := config.Load(*configFile, overrides)
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	debugMode = config.Proxy.Debug
+	proxy.SetDebugMode(cfg.Proxy.Debug)
 	log.Printf("Loaded config from: %s", *configFile)
 
-	targetURLParsed, err := url.Parse(config.Proxy.Target)
+	targetURLParsed, err := url.Parse(cfg.Proxy.Target)
 	if err != nil {
 		log.Fatalf("Invalid target server URL: %v", err)
 	}
 
-	proxy := httputil.NewSingleHostReverseProxy(targetURLParsed)
+	reverseProxy := httputil.NewSingleHostReverseProxy(targetURLParsed)
 
-	if config.Proxy.Timeout > 0 {
-		proxy.Transport = &http.Transport{
-			TLSHandshakeTimeout:   config.Proxy.Timeout,
-			ResponseHeaderTimeout: config.Proxy.Timeout,
+	if cfg.Proxy.Timeout > 0 {
+		reverseProxy.Transport = &http.Transport{
+			TLSHandshakeTimeout:   cfg.Proxy.Timeout,
+			ResponseHeaderTimeout: cfg.Proxy.Timeout,
 		}
-		log.Printf("Configured timeout: %v", config.Proxy.Timeout)
+		log.Printf("Configured timeout: %v", cfg.Proxy.Timeout)
 	}
 
-	originalDirector := proxy.Director
-	proxy.Director = func(req *http.Request) {
+	originalDirector := reverseProxy.Director
+	reverseProxy.Director = func(req *http.Request) {
 		log.Printf("%s %s", req.Method, req.URL.Path)
 		originalDirector(req)
-		modifyRequest(req, config)
+		proxy.ModifyRequest(req, cfg)
 	}
 
-	listenAddrFinal := config.Proxy.Listen
-	server := createServer(listenAddrFinal, proxy, config)
+	// Add response modifier
+	reverseProxy.ModifyResponse = func(resp *http.Response) error {
+		return proxy.ModifyResponse(resp, cfg)
+	}
 
-	if config.Proxy.SSLCert != "" && config.Proxy.SSLKey != "" {
-		log.Printf("Proxying https://%s to %s", listenAddrFinal, config.Proxy.Target)
-		log.Fatalf("HTTPS server failed: %v", server.ListenAndServeTLS(config.Proxy.SSLCert, config.Proxy.SSLKey))
+	listenAddrFinal := cfg.Proxy.Listen
+	server := createServer(listenAddrFinal, reverseProxy, cfg)
+
+	if cfg.Proxy.SSLCert != "" && cfg.Proxy.SSLKey != "" {
+		log.Printf("Proxying https://%s to %s", listenAddrFinal, cfg.Proxy.Target)
+		log.Fatalf("HTTPS server failed: %v", server.ListenAndServeTLS(cfg.Proxy.SSLCert, cfg.Proxy.SSLKey))
 	} else {
-		log.Printf("Proxying http://%s to %s", listenAddrFinal, config.Proxy.Target)
+		log.Printf("Proxying http://%s to %s", listenAddrFinal, cfg.Proxy.Target)
 		log.Fatalf("HTTP server failed: %v", server.ListenAndServe())
 	}
 }
 
-func createServer(addr string, handler http.Handler, config *Config) *http.Server {
+func createServer(addr string, handler http.Handler, cfg *config.Config) *http.Server {
 	server := &http.Server{
 		Addr:    addr,
 		Handler: handler,
 	}
 
-	if config.Proxy.SSLCert != "" && config.Proxy.SSLKey != "" {
-		cert, err := tls.LoadX509KeyPair(config.Proxy.SSLCert, config.Proxy.SSLKey)
+	if cfg.Proxy.SSLCert != "" && cfg.Proxy.SSLKey != "" {
+		cert, err := tls.LoadX509KeyPair(cfg.Proxy.SSLCert, cfg.Proxy.SSLKey)
 		if err != nil {
 			log.Fatalf("Failed to load SSL certificates: %v", err)
 		}
@@ -346,159 +115,8 @@ func createServer(addr string, handler http.Handler, config *Config) *http.Serve
 		}
 	}
 
-	server.ReadTimeout = config.Proxy.Timeout
-	server.WriteTimeout = config.Proxy.Timeout
+	server.ReadTimeout = cfg.Proxy.Timeout
+	server.WriteTimeout = cfg.Proxy.Timeout
 
 	return server
-}
-
-// =============================================================================
-// Request Processing & Rule Engine
-// =============================================================================
-
-func modifyRequest(req *http.Request, config *Config) {
-	matchingRule := findMatchingRule(req, config)
-	if matchingRule == nil {
-		logDebug("No matching rule for %s %s", req.Method, req.URL.Path)
-		return
-	}
-
-	if matchingRule.TargetPath != "" {
-		originalPath := req.URL.Path
-		req.URL.Path = matchingRule.TargetPath
-		logDebug("Rewrote request path from %s to %s", originalPath, matchingRule.TargetPath)
-	}
-
-	body, err := io.ReadAll(req.Body)
-	if err != nil {
-		log.Printf("Failed to read request body: %v", err)
-		return
-	}
-	req.Body.Close()
-
-	if debugMode && len(body) > 0 {
-		var prettyJSON bytes.Buffer
-		json.Indent(&prettyJSON, body, "", "  ")
-		logDebug("Inbound request body:\n%s", prettyJSON.String())
-	}
-
-	var data map[string]any
-	if err := json.Unmarshal(body, &data); err != nil {
-		log.Printf("Failed to parse JSON request: %v", err)
-		req.Body = io.NopCloser(bytes.NewReader(body))
-		return
-	}
-
-	modified, appliedValues := processRules(data, matchingRule.Operations)
-
-	modifiedBody, err := json.Marshal(data)
-	if err != nil {
-		log.Printf("Failed to marshal modified JSON: %v", err)
-		req.Body = io.NopCloser(bytes.NewReader(body))
-		return
-	}
-
-	req.Body = io.NopCloser(bytes.NewReader(modifiedBody))
-	req.ContentLength = int64(len(modifiedBody))
-
-	if modified {
-		appliedJSON, _ := json.MarshalIndent(appliedValues, "", "  ")
-		logDebug("Applied changes:\n%s", string(appliedJSON))
-	}
-}
-
-func findMatchingRule(req *http.Request, config *Config) *Rule {
-	for _, rule := range config.Rules {
-		if matchesMethod(req.Method, rule.Methods) && matchesPath(req.URL.Path, rule.Paths) {
-			return &rule
-		}
-	}
-	return nil
-}
-
-func matchesPattern(input string, patterns PatternField) bool {
-	for _, pattern := range patterns {
-		if matched, err := regexp.MatchString(regexFlags+pattern, input); err == nil && matched {
-			return true
-		}
-	}
-	return false
-}
-
-func matchesMethod(method string, methods PatternField) bool {
-	return matchesPattern(method, methods)
-}
-
-func matchesPath(path string, paths PatternField) bool {
-	return matchesPattern(path, paths)
-}
-
-func processRules(data map[string]any, operations []Operation) (bool, map[string]any) {
-	appliedValues := make(map[string]any)
-	anyApplied := false
-
-	for _, op := range operations {
-		if satisfiesFilter(data, op.Filters) {
-			if len(op.Default) > 0 {
-				applyDefaultOperation(data, op.Default, appliedValues)
-				anyApplied = true
-			}
-			if len(op.Merge) > 0 {
-				applyMergeOperation(data, op.Merge, appliedValues)
-				anyApplied = true
-			}
-			if len(op.Delete) > 0 {
-				applyDeleteOperation(data, op.Delete, appliedValues)
-				anyApplied = true
-			}
-			if op.Stop {
-				break
-			}
-		}
-	}
-	return anyApplied, appliedValues
-}
-
-func applyMergeOperation(data map[string]any, mergeValues map[string]any, appliedValues map[string]any) {
-	for key, value := range mergeValues {
-		data[key] = value
-		appliedValues[key] = value
-	}
-}
-
-func applyDefaultOperation(data map[string]any, defaultValues map[string]any, appliedValues map[string]any) {
-	for key, value := range defaultValues {
-		if _, exists := data[key]; !exists {
-			data[key] = value
-			appliedValues[key] = value
-		}
-	}
-}
-
-func applyDeleteOperation(data map[string]any, deleteKeys []string, appliedValues map[string]any) {
-	for _, key := range deleteKeys {
-		if _, exists := data[key]; exists {
-			delete(data, key)
-			appliedValues[key] = "<deleted>"
-		}
-	}
-}
-
-func satisfiesFilter(data map[string]any, filters map[string]PatternField) bool {
-	if len(filters) == 0 {
-		return true
-	}
-
-	for key, patterns := range filters {
-		actualValue, exists := data[key]
-		if !exists {
-			return false
-		}
-
-		actualStr := fmt.Sprintf("%v", actualValue)
-		if !matchesPattern(actualStr, patterns) {
-			return false
-		}
-	}
-	return true
 }

@@ -1,0 +1,10 @@
+proxy:
+  target: "http://localhost:8080"
+
+rules:
+  - methods: POST
+    paths: /v1/chat
+    on_request:
+      - merge:
+          temperature: 0.7
+
