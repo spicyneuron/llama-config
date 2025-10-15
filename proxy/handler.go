@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -109,11 +110,7 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 
 // ModifyResponse processes the response through matching rules
 func ModifyResponse(resp *http.Response, cfg *config.Config) error {
-	// Skip if not JSON
 	contentType := resp.Header.Get("Content-Type")
-	if !strings.Contains(contentType, "application/json") {
-		return nil
-	}
 
 	// Get the rule from context
 	matchingRule, ok := resp.Request.Context().Value(ruleContextKey).(*config.Rule)
@@ -123,6 +120,16 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 
 	// Skip if no response operations
 	if len(matchingRule.OnResponse) == 0 {
+		return nil
+	}
+
+	// Route to streaming handler if SSE
+	if strings.Contains(contentType, "text/event-stream") {
+		return ModifyStreamingResponse(resp, matchingRule)
+	}
+
+	// Skip if not JSON
+	if !strings.Contains(contentType, "application/json") {
 		return nil
 	}
 
@@ -170,6 +177,120 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 		appliedJSON, _ := json.MarshalIndent(appliedValues, "", "  ")
 		logDebug("Applied response changes:\n%s", string(appliedJSON))
 	}
+
+	return nil
+}
+
+// ModifyStreamingResponse processes Server-Sent Events (SSE) line-by-line
+func ModifyStreamingResponse(resp *http.Response, rule *config.Rule) error {
+	// Create a pipe for streaming transformation
+	pipeReader, pipeWriter := io.Pipe()
+	originalBody := resp.Body
+
+	// Replace response body with pipe reader
+	resp.Body = pipeReader
+
+	// Start goroutine to transform and write to pipe
+	go func() {
+		defer pipeWriter.Close()
+		defer originalBody.Close()
+
+		scanner := bufio.NewScanner(originalBody)
+		scanner.Buffer(make([]byte, 64*1024), 1024*1024) // 64KB initial, 1MB max line size
+
+		// Extract response headers for matching
+		headers := make(map[string]string)
+		for key, values := range resp.Header {
+			if len(values) > 0 {
+				headers[key] = values[0]
+			}
+		}
+
+		lineNum := 0
+		for scanner.Scan() {
+			lineNum++
+			line := scanner.Text()
+
+			// Empty lines are SSE delimiters - pass through
+			if line == "" {
+				if _, err := pipeWriter.Write([]byte("\n")); err != nil {
+					logDebug("Failed to write empty line: %v", err)
+					return
+				}
+				continue
+			}
+
+			// Detect format and extract JSON
+			var jsonData []byte
+			var isSSE bool
+
+			if strings.HasPrefix(line, "data: ") {
+				// OpenAI SSE format: "data: {...}"
+				isSSE = true
+				jsonStr := strings.TrimPrefix(line, "data: ")
+
+				// Handle [DONE] marker
+				if jsonStr == "[DONE]" {
+					if _, err := pipeWriter.Write([]byte(line + "\n")); err != nil {
+						logDebug("Failed to write [DONE]: %v", err)
+					}
+					continue
+				}
+
+				jsonData = []byte(jsonStr)
+			} else {
+				// Ollama raw JSON format
+				jsonData = []byte(line)
+			}
+
+			// Parse JSON chunk
+			var data map[string]any
+			if err := json.Unmarshal(jsonData, &data); err != nil {
+				// Not JSON, pass through unchanged
+				if _, err := pipeWriter.Write([]byte(line + "\n")); err != nil {
+					logDebug("Failed to write non-JSON line: %v", err)
+				}
+				continue
+			}
+
+			// Apply response transformations
+			modified, appliedValues := config.ProcessResponse(data, headers, rule.OpRule)
+
+			if debugMode && modified {
+				appliedJSON, _ := json.MarshalIndent(appliedValues, "", "  ")
+				logDebug("Applied streaming chunk transformation (line %d):\n%s", lineNum, string(appliedJSON))
+			}
+
+			// Marshal back to JSON
+			modifiedJSON, err := json.Marshal(data)
+			if err != nil {
+				logDebug("Failed to marshal modified chunk: %v", err)
+				// Write original on error
+				if _, err := pipeWriter.Write([]byte(line + "\n")); err != nil {
+					return
+				}
+				continue
+			}
+
+			// Write in original format
+			if isSSE {
+				if _, err := pipeWriter.Write([]byte("data: ")); err != nil {
+					return
+				}
+			}
+			if _, err := pipeWriter.Write(modifiedJSON); err != nil {
+				return
+			}
+			if _, err := pipeWriter.Write([]byte("\n")); err != nil {
+				return
+			}
+		}
+
+		if err := scanner.Err(); err != nil {
+			logDebug("Scanner error: %v", err)
+			pipeWriter.CloseWithError(err)
+		}
+	}()
 
 	return nil
 }
