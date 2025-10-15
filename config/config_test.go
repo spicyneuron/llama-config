@@ -78,7 +78,7 @@ rules:
 		t.Fatalf("Failed to write test config: %v", err)
 	}
 
-	cfg, err := Load(configPath, CliOverrides{})
+	cfg, err := Load([]string{configPath}, CliOverrides{})
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
 	}
@@ -130,7 +130,7 @@ rules:
 		Debug:   true,
 	}
 
-	cfg, err := Load(configPath, overrides)
+	cfg, err := Load([]string{configPath}, overrides)
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
 	}
@@ -172,7 +172,7 @@ rules:
 }
 
 func TestLoadInvalidFile(t *testing.T) {
-	_, err := Load("/nonexistent/config.yml", CliOverrides{})
+	_, err := Load([]string{"/nonexistent/config.yml"}, CliOverrides{})
 	if err == nil {
 		t.Error("Load() should fail for nonexistent file")
 	}
@@ -317,5 +317,280 @@ func TestPatternFieldUnmarshalYAML(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestLoadMultipleConfigs(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	baseConfig := `
+proxy:
+  listen: "localhost:8080"
+  target: "http://localhost:3000"
+
+rules:
+  - methods: GET
+    paths: /health
+    on_request:
+      - merge:
+          from: "base-config"
+`
+	baseConfigPath := filepath.Join(tmpDir, "base.yml")
+	if err := os.WriteFile(baseConfigPath, []byte(baseConfig), 0644); err != nil {
+		t.Fatalf("Failed to write base config: %v", err)
+	}
+
+	rulesConfig := `
+rules:
+  - methods: POST
+    paths: /api/.*
+    on_request:
+      - merge:
+          from: "rules-config"
+`
+	rulesConfigPath := filepath.Join(tmpDir, "rules.yml")
+	if err := os.WriteFile(rulesConfigPath, []byte(rulesConfig), 0644); err != nil {
+		t.Fatalf("Failed to write rules config: %v", err)
+	}
+
+	cfg, err := Load([]string{baseConfigPath, rulesConfigPath}, CliOverrides{})
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	if cfg.Proxy.Listen != "localhost:8080" {
+		t.Errorf("Listen = %v, want localhost:8080", cfg.Proxy.Listen)
+	}
+
+	if len(cfg.Rules) != 2 {
+		t.Fatalf("len(Rules) = %d, want 2", len(cfg.Rules))
+	}
+
+	if cfg.Rules[0].Methods.Patterns[0] != "GET" {
+		t.Errorf("Rules[0].Methods = %v, want GET", cfg.Rules[0].Methods.Patterns[0])
+	}
+
+	if cfg.Rules[1].Methods.Patterns[0] != "POST" {
+		t.Errorf("Rules[1].Methods = %v, want POST", cfg.Rules[1].Methods.Patterns[0])
+	}
+}
+
+func TestLoadProxyMerge(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	config1 := `
+proxy:
+  listen: "localhost:8080"
+
+rules:
+  - methods: GET
+    paths: /health
+    on_request:
+      - merge:
+          from: "config1"
+`
+	config1Path := filepath.Join(tmpDir, "config1.yml")
+	if err := os.WriteFile(config1Path, []byte(config1), 0644); err != nil {
+		t.Fatalf("Failed to write config1: %v", err)
+	}
+
+	config2 := `
+proxy:
+  target: "http://localhost:3000"
+  debug: true
+
+rules:
+  - methods: POST
+    paths: /data
+    on_request:
+      - merge:
+          from: "config2"
+`
+	config2Path := filepath.Join(tmpDir, "config2.yml")
+	if err := os.WriteFile(config2Path, []byte(config2), 0644); err != nil {
+		t.Fatalf("Failed to write config2: %v", err)
+	}
+
+	cfg, err := Load([]string{config1Path, config2Path}, CliOverrides{})
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	if cfg.Proxy.Listen != "localhost:8080" {
+		t.Errorf("Listen = %v, want localhost:8080 (from config1, not overridden)", cfg.Proxy.Listen)
+	}
+
+	if cfg.Proxy.Target != "http://localhost:3000" {
+		t.Errorf("Target = %v, want http://localhost:3000 (from config2)", cfg.Proxy.Target)
+	}
+
+	if !cfg.Proxy.Debug {
+		t.Error("Debug should be true (from config2)")
+	}
+
+	if len(cfg.Rules) != 2 {
+		t.Fatalf("len(Rules) = %d, want 2", len(cfg.Rules))
+	}
+}
+
+func TestLoadProxyOverride(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	base := `
+proxy:
+  listen: "localhost:8080"
+  target: "http://localhost:3000"
+  timeout: 30s
+
+rules:
+  - methods: GET
+    paths: /health
+    on_request:
+      - merge:
+          from: "base"
+`
+	basePath := filepath.Join(tmpDir, "base.yml")
+	if err := os.WriteFile(basePath, []byte(base), 0644); err != nil {
+		t.Fatalf("Failed to write base: %v", err)
+	}
+
+	override := `
+proxy:
+  listen: "localhost:9000"
+  debug: true
+`
+	overridePath := filepath.Join(tmpDir, "override.yml")
+	if err := os.WriteFile(overridePath, []byte(override), 0644); err != nil {
+		t.Fatalf("Failed to write override: %v", err)
+	}
+
+	cfg, err := Load([]string{basePath, overridePath}, CliOverrides{})
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	if cfg.Proxy.Listen != "localhost:9000" {
+		t.Errorf("Listen = %v, want localhost:9000 (overridden by later config)", cfg.Proxy.Listen)
+	}
+
+	if cfg.Proxy.Target != "http://localhost:3000" {
+		t.Errorf("Target = %v, want http://localhost:3000 (from base, not overridden)", cfg.Proxy.Target)
+	}
+
+	if cfg.Proxy.Timeout != 30*time.Second {
+		t.Errorf("Timeout = %v, want 30s (from base, not overridden)", cfg.Proxy.Timeout)
+	}
+
+	if !cfg.Proxy.Debug {
+		t.Error("Debug should be true (from override)")
+	}
+}
+
+func TestLoadThreeConfigs(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	configs := []struct {
+		name    string
+		content string
+		method  string
+	}{
+		{"config1.yml", `
+rules:
+  - methods: GET
+    paths: /health
+    on_request:
+      - merge:
+          from: "config1"
+`, "GET"},
+		{"config2.yml", `
+rules:
+  - methods: POST
+    paths: /data
+    on_request:
+      - merge:
+          from: "config2"
+`, "POST"},
+		{"config3.yml", `
+proxy:
+  listen: "localhost:9000"
+  target: "http://localhost:3000"
+
+rules:
+  - methods: DELETE
+    paths: /remove
+    on_request:
+      - merge:
+          from: "config3"
+`, "DELETE"},
+	}
+
+	var configPaths []string
+	for _, cfg := range configs {
+		path := filepath.Join(tmpDir, cfg.name)
+		if err := os.WriteFile(path, []byte(cfg.content), 0644); err != nil {
+			t.Fatalf("Failed to write %s: %v", cfg.name, err)
+		}
+		configPaths = append(configPaths, path)
+	}
+
+	mergedCfg, err := Load(configPaths, CliOverrides{})
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	if mergedCfg.Proxy.Listen != "localhost:9000" {
+		t.Errorf("Listen = %v, want localhost:9000", mergedCfg.Proxy.Listen)
+	}
+
+	if len(mergedCfg.Rules) != 3 {
+		t.Fatalf("len(Rules) = %d, want 3", len(mergedCfg.Rules))
+	}
+
+	expectedMethods := []string{"GET", "POST", "DELETE"}
+	for i, expected := range expectedMethods {
+		if mergedCfg.Rules[i].Methods.Patterns[0] != expected {
+			t.Errorf("Rules[%d].Methods = %v, want %v", i, mergedCfg.Rules[i].Methods.Patterns[0], expected)
+		}
+	}
+}
+
+func TestLoadNonexistent(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	validConfig := `
+proxy:
+  listen: "localhost:9000"
+  target: "http://localhost:3000"
+
+rules:
+  - methods: GET
+    paths: /test
+    on_request:
+      - merge:
+          from: "valid"
+`
+	validConfigPath := filepath.Join(tmpDir, "valid.yml")
+	if err := os.WriteFile(validConfigPath, []byte(validConfig), 0644); err != nil {
+		t.Fatalf("Failed to write valid config: %v", err)
+	}
+
+	_, err := Load([]string{validConfigPath, "nonexistent.yml"}, CliOverrides{})
+	if err == nil {
+		t.Fatal("Load() should fail when one config doesn't exist")
+	}
+
+	if !strings.Contains(err.Error(), "failed to read config file") {
+		t.Errorf("Error should mention read failure, got: %v", err)
+	}
+}
+
+func TestLoadEmpty(t *testing.T) {
+	_, err := Load([]string{}, CliOverrides{})
+	if err == nil {
+		t.Fatal("Load() should fail with empty config list")
+	}
+
+	if !strings.Contains(err.Error(), "at least one config file required") {
+		t.Errorf("Error should mention empty config list, got: %v", err)
 	}
 }

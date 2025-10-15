@@ -116,38 +116,72 @@ func (p PatternField) Len() int {
 	return len(p.Patterns)
 }
 
-// Load reads and parses a config file
-func Load(configPath string, overrides CliOverrides) (*Config, error) {
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %w", err)
+// Load loads and merges one or more config files
+// Later configs override earlier proxy settings, all rules are appended in order
+func Load(configPaths []string, overrides CliOverrides) (*Config, error) {
+	if len(configPaths) == 0 {
+		return nil, fmt.Errorf("at least one config file required")
 	}
 
-	var config Config
-	if err := yaml.Unmarshal(data, &config); err != nil {
-		return nil, fmt.Errorf("failed to parse config file: %w", err)
+	var mergedConfig *Config
+	var configDir string
+
+	for i, configPath := range configPaths {
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read config file %s: %w", configPath, err)
+		}
+
+		var cfg Config
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			return nil, fmt.Errorf("failed to parse config file %s: %w", configPath, err)
+		}
+
+		if i == 0 {
+			mergedConfig = &cfg
+			configDir = filepath.Dir(configPath)
+		} else {
+			if cfg.Proxy.Listen != "" {
+				mergedConfig.Proxy.Listen = cfg.Proxy.Listen
+			}
+			if cfg.Proxy.Target != "" {
+				mergedConfig.Proxy.Target = cfg.Proxy.Target
+			}
+			if cfg.Proxy.Timeout != 0 {
+				mergedConfig.Proxy.Timeout = cfg.Proxy.Timeout
+			}
+			if cfg.Proxy.SSLCert != "" {
+				mergedConfig.Proxy.SSLCert = cfg.Proxy.SSLCert
+			}
+			if cfg.Proxy.SSLKey != "" {
+				mergedConfig.Proxy.SSLKey = cfg.Proxy.SSLKey
+			}
+			if cfg.Proxy.Debug {
+				mergedConfig.Proxy.Debug = cfg.Proxy.Debug
+			}
+
+			mergedConfig.Rules = append(mergedConfig.Rules, cfg.Rules...)
+		}
 	}
 
-	applyOverrides(&config.Proxy, overrides)
+	applyOverrides(&mergedConfig.Proxy, overrides)
 
-	if config.Proxy.Timeout == 0 {
-		config.Proxy.Timeout = 60 * time.Second
+	if mergedConfig.Proxy.Timeout == 0 {
+		mergedConfig.Proxy.Timeout = 60 * time.Second
 	}
 
-	configDir := filepath.Dir(configPath)
-	config.Proxy.SSLCert = resolveSSLPath(config.Proxy.SSLCert, configDir)
-	config.Proxy.SSLKey = resolveSSLPath(config.Proxy.SSLKey, configDir)
+	mergedConfig.Proxy.SSLCert = resolveSSLPath(mergedConfig.Proxy.SSLCert, configDir)
+	mergedConfig.Proxy.SSLKey = resolveSSLPath(mergedConfig.Proxy.SSLKey, configDir)
 
-	if err := Validate(&config); err != nil {
+	if err := Validate(mergedConfig); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)
 	}
 
-	// Compile templates
-	if err := CompileTemplates(&config); err != nil {
+	if err := CompileTemplates(mergedConfig); err != nil {
 		return nil, fmt.Errorf("template compilation failed: %w", err)
 	}
 
-	return &config, nil
+	return mergedConfig, nil
 }
 
 func applyOverrides(proxy *ProxyConfig, overrides CliOverrides) {

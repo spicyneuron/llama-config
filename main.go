@@ -14,21 +14,35 @@ import (
 	"github.com/spicyneuron/llama-config-proxy/proxy"
 )
 
+// configFiles allows multiple -config flags
+type configFiles []string
+
+func (c *configFiles) String() string {
+	return fmt.Sprint(*c)
+}
+
+func (c *configFiles) Set(value string) error {
+	*c = append(*c, value)
+	return nil
+}
+
 func main() {
 	var (
-		configFile = flag.String("config", "", "Path to YAML configuration (required)")
-		listenAddr = flag.String("listen", "", "Address to listen on (ex: localhost:8081)")
-		targetURL  = flag.String("target", "", "Target URL to proxy to (ex: http://localhost:8080)")
-		sslCert    = flag.String("ssl-cert", "", "SSL certificate file (ex: cert.pem)")
-		sslKey     = flag.String("ssl-key", "", "SSL key file (ex: key.pem)")
-		timeout    = flag.Duration("timeout", 0, "Timeout for requests to target (ex: 60s)")
-		debug      = flag.Bool("debug", false, "Print debug logs")
+		configPaths configFiles
+		listenAddr  = flag.String("listen", "", "Address to listen on (ex: localhost:8081)")
+		targetURL   = flag.String("target", "", "Target URL to proxy to (ex: http://localhost:8080)")
+		sslCert     = flag.String("ssl-cert", "", "SSL certificate file (ex: cert.pem)")
+		sslKey      = flag.String("ssl-key", "", "SSL key file (ex: key.pem)")
+		timeout     = flag.Duration("timeout", 0, "Timeout for requests to target (ex: 60s)")
+		debug       = flag.Bool("debug", false, "Print debug logs")
 	)
+
+	flag.Var(&configPaths, "config", "Path to YAML configuration (can be specified multiple times)")
 
 	flag.Usage = func() {
 		fmt.Println("llama-config-proxy: Automatically apply optimal settings to LLM requests")
 		fmt.Println()
-		fmt.Println("Usage: llama-config-proxy --config <config.yml>")
+		fmt.Println("Usage: llama-config-proxy -config <config.yml> [-config <rules.yml> ...]")
 		fmt.Println()
 		flag.PrintDefaults()
 		fmt.Println()
@@ -38,7 +52,7 @@ func main() {
 
 	flag.Parse()
 
-	if *configFile == "" {
+	if len(configPaths) == 0 {
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -52,13 +66,17 @@ func main() {
 		Debug:   *debug,
 	}
 
-	cfg, err := config.Load(*configFile, overrides)
+	cfg, err := config.Load(configPaths, overrides)
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
 	proxy.SetDebugMode(cfg.Proxy.Debug)
-	log.Printf("Loaded config from: %s", *configFile)
+	if len(configPaths) == 1 {
+		log.Printf("Loaded config from: %s", configPaths[0])
+	} else {
+		log.Printf("Loaded config from %d files: %v", len(configPaths), configPaths)
+	}
 
 	targetURLParsed, err := url.Parse(cfg.Proxy.Target)
 	if err != nil {
