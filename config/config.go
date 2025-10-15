@@ -51,15 +51,16 @@ type Rule struct {
 
 // Operation defines a transformation to apply
 type Operation struct {
-	// Template transformation
-	Template string `yaml:"template,omitempty"`
+	// Matching criteria
+	MatchBody    map[string]PatternField `yaml:"match_body,omitempty"`
+	MatchHeaders map[string]PatternField `yaml:"match_headers,omitempty"`
 
-	// Existing operations
-	Filters map[string]PatternField `yaml:"filters"`
-	Merge   map[string]any          `yaml:"merge,omitempty"`
-	Default map[string]any          `yaml:"default,omitempty"`
-	Delete  []string                `yaml:"delete,omitempty"`
-	Stop    bool                    `yaml:"stop,omitempty"`
+	// Transformations
+	Template string         `yaml:"template,omitempty"`
+	Merge    map[string]any `yaml:"merge,omitempty"`
+	Default  map[string]any `yaml:"default,omitempty"`
+	Delete   []string       `yaml:"delete,omitempty"`
+	Stop     bool           `yaml:"stop,omitempty"`
 }
 
 // PatternField can be a single pattern or array of patterns

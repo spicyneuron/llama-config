@@ -263,10 +263,33 @@ func TestValidateOperation(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "valid filter",
+			name: "valid match_body filter",
 			op: Operation{
-				Filters: map[string]PatternField{
+				MatchBody: map[string]PatternField{
 					"model": newPatternField("llama.*"),
+				},
+				Merge: map[string]any{"temperature": 0.7},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid match_headers filter",
+			op: Operation{
+				MatchHeaders: map[string]PatternField{
+					"Content-Type": newPatternField("application/json"),
+				},
+				Merge: map[string]any{"temperature": 0.7},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid match_body and match_headers",
+			op: Operation{
+				MatchBody: map[string]PatternField{
+					"model": newPatternField("gpt.*"),
+				},
+				MatchHeaders: map[string]PatternField{
+					"X-API-Key": newPatternField(".*"),
 				},
 				Merge: map[string]any{"temperature": 0.7},
 			},
@@ -279,10 +302,21 @@ func TestValidateOperation(t *testing.T) {
 			errMsg:  "must have at least one action",
 		},
 		{
-			name: "invalid regex in filter",
+			name: "invalid regex in match_body",
 			op: Operation{
-				Filters: map[string]PatternField{
+				MatchBody: map[string]PatternField{
 					"model": newPatternField("[invalid"),
+				},
+				Merge: map[string]any{"temp": 0.7},
+			},
+			wantErr: true,
+			errMsg:  "invalid regex pattern",
+		},
+		{
+			name: "invalid regex in match_headers",
+			op: Operation{
+				MatchHeaders: map[string]PatternField{
+					"Content-Type": newPatternField("[invalid"),
 				},
 				Merge: map[string]any{"temp": 0.7},
 			},

@@ -21,51 +21,64 @@ type CompiledRule struct {
 
 // OperationExec represents an operation during execution (converted from Operation)
 type OperationExec struct {
-	Template string
-	Filters  map[string]PatternField
-	Merge    map[string]any
-	Default  map[string]any
-	Delete   []string
-	Stop     bool
+	MatchBody    map[string]PatternField
+	MatchHeaders map[string]PatternField
+	Template     string
+	Merge        map[string]any
+	Default      map[string]any
+	Delete       []string
+	Stop         bool
 }
 
-// SatisfiesFilter checks if data matches all filter conditions
-func SatisfiesFilter(data map[string]any, filters map[string]PatternField) bool {
-	if len(filters) == 0 {
+// matchesPatterns checks if string values match pattern field conditions
+func matchesPatterns(values map[string]string, patterns map[string]PatternField) bool {
+	if len(patterns) == 0 {
 		return true
 	}
 
-	for key, patterns := range filters {
-		actualValue, exists := data[key]
+	for key, pattern := range patterns {
+		actualValue, exists := values[key]
 		if !exists {
 			return false
 		}
 
-		actualStr := fmt.Sprintf("%v", actualValue)
-		if !patterns.Matches(actualStr) {
+		if !pattern.Matches(actualValue) {
 			return false
 		}
 	}
 	return true
 }
 
+// toStringMap converts map[string]any to map[string]string for pattern matching
+func toStringMap(data map[string]any) map[string]string {
+	result := make(map[string]string, len(data))
+	for key, value := range data {
+		result[key] = fmt.Sprintf("%v", value)
+	}
+	return result
+}
+
 // ProcessRequest applies all request operations to data
-func ProcessRequest(data map[string]any, rule *CompiledRule) (bool, map[string]any) {
-	return processOperations(data, rule.OnRequest, rule.OnRequestTemplates)
+func ProcessRequest(data map[string]any, headers map[string]string, rule *CompiledRule) (bool, map[string]any) {
+	return processOperations(data, headers, rule.OnRequest, rule.OnRequestTemplates)
 }
 
 // ProcessResponse applies all response operations to data
-func ProcessResponse(data map[string]any, rule *CompiledRule) (bool, map[string]any) {
-	return processOperations(data, rule.OnResponse, rule.OnResponseTemplates)
+func ProcessResponse(data map[string]any, headers map[string]string, rule *CompiledRule) (bool, map[string]any) {
+	return processOperations(data, headers, rule.OnResponse, rule.OnResponseTemplates)
 }
 
 // processOperations applies operations to data with their compiled templates
-func processOperations(data map[string]any, operations []OperationExec, templates []*template.Template) (bool, map[string]any) {
+func processOperations(data map[string]any, headers map[string]string, operations []OperationExec, templates []*template.Template) (bool, map[string]any) {
 	appliedValues := make(map[string]any)
 	anyApplied := false
 
+	// Convert body data to strings for pattern matching
+	bodyStrings := toStringMap(data)
+
 	for i, op := range operations {
-		if !SatisfiesFilter(data, op.Filters) {
+		// Check both body and header matching using the same function
+		if !matchesPatterns(bodyStrings, op.MatchBody) || !matchesPatterns(headers, op.MatchHeaders) {
 			continue
 		}
 
@@ -218,4 +231,3 @@ func ExecuteTemplate(tmpl *template.Template, input map[string]any, output map[s
 
 	return true
 }
-

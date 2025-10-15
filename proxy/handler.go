@@ -81,7 +81,15 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 		return
 	}
 
-	modified, appliedValues := config.ProcessRequest(data, matchingRule.OpRule)
+	// Extract headers as map[string]string for matching
+	headers := make(map[string]string)
+	for key, values := range req.Header {
+		if len(values) > 0 {
+			headers[key] = values[0]
+		}
+	}
+
+	modified, appliedValues := config.ProcessRequest(data, headers, matchingRule.OpRule)
 
 	modifiedBody, err := json.Marshal(data)
 	if err != nil {
@@ -139,7 +147,15 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 		return nil
 	}
 
-	modified, appliedValues := config.ProcessResponse(data, matchingRule.OpRule)
+	// Extract response headers as map[string]string for matching
+	headers := make(map[string]string)
+	for key, values := range resp.Header {
+		if len(values) > 0 {
+			headers[key] = values[0]
+		}
+	}
+
+	modified, appliedValues := config.ProcessResponse(data, headers, matchingRule.OpRule)
 
 	modifiedBody, err := json.Marshal(data)
 	if err != nil {

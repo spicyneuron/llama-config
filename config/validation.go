@@ -74,9 +74,17 @@ func validateRule(rule *Rule, index int) error {
 }
 
 func validateOperation(op *Operation, ruleIndex, opIndex int, opType string) error {
-	for key, patterns := range op.Filters {
+	// Validate match_body patterns
+	for key, patterns := range op.MatchBody {
 		if err := patterns.Validate(); err != nil {
-			return fmt.Errorf("rule %d %s %d filter '%s': %w", ruleIndex, opType, opIndex, key, err)
+			return fmt.Errorf("rule %d %s %d match_body '%s': %w", ruleIndex, opType, opIndex, key, err)
+		}
+	}
+
+	// Validate match_headers patterns
+	for key, patterns := range op.MatchHeaders {
+		if err := patterns.Validate(); err != nil {
+			return fmt.Errorf("rule %d %s %d match_headers '%s': %w", ruleIndex, opType, opIndex, key, err)
 		}
 	}
 

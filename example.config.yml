@@ -13,8 +13,8 @@ proxy:
 # Request Rules
 rules:
 
-  # `methods`, `paths` and `filters` field values are regex patterns. Include a
-  # string or array of strings.
+  # `methods`, `paths`, `match_body`, and `match_headers` field values are regex
+  # patterns. Include a string or array of strings.
   - methods: POST
     paths: .*/chat/completions
 
@@ -22,46 +22,46 @@ rules:
     target_path: /v1/chat/completions
 
     # All operations are processed unless a `stop: true` is matched. Operations
-    # without filters always match. Each operation should contain one or more
-    # actions. Within an operation, actions execute in this order: template ->
-    # default -> merge -> delete.
+    # without match_body/match_headers always match. Each operation should contain
+    # one or more actions. Within an operation, actions execute in this order:
+    # template -> default -> merge -> delete.
     on_request:
       # Apply to all requests
       - default:
           max_tokens: 10000
 
       # Apply aliases
-      - filters:
+      - match_body:
           model: r1
         merge:
           model: deepseek-r1
 
       # Model-specific configurations
-      - filters:
+      - match_body:
           model: deepseek-?(v3|r1)
         merge:
           temperature: 0.6
           top_p: 0.95
 
-      - filters:
+      - match_body:
           model: gemma-?3
         merge:
           temperature: 1
           top_k: 64
           top_p: 0.95
 
-      - filters:
+      - match_body:
           model: glm-?4
         merge:
           temperature: 0.6
 
-      - filters:
+      - match_body:
           model: gpt-oss
         merge:
           temperature: 1
           top_k: 0
 
-      - filters:
+      - match_body:
           model: qwen-?3.*-coder
         merge:
           temperature: 0.7
@@ -69,14 +69,14 @@ rules:
           top_p: 0.8
           repeat_penalty: 1.05
 
-      - filters:
+      - match_body:
           model: qwen-?3.*-instruct
         merge:
           temperature: 0.7
           top_k: 20
           top_p: 0.8
 
-      - filters:
+      - match_body:
           model: qwen-?3.*-thinking
         merge:
           temperature: 0.6

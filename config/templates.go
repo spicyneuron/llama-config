@@ -57,12 +57,5 @@ func CompileTemplates(cfg *Config) error {
 }
 
 func convertOperation(op Operation) OperationExec {
-	return OperationExec{
-		Template: op.Template,
-		Filters:  op.Filters,
-		Merge:    op.Merge,
-		Default:  op.Default,
-		Delete:   op.Delete,
-		Stop:     op.Stop,
-	}
+	return OperationExec(op)
 }
