@@ -73,11 +73,21 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 	}
 
 	// Read and limit body size to 10MB to prevent memory exhaustion
-	limitedBody := io.LimitReader(req.Body, 10*1024*1024)
-	body, err := io.ReadAll(limitedBody)
-	req.Body.Close()
-	if err != nil {
-		log.Printf("Failed to read request body: %v", err)
+	var body []byte
+	var err error
+	if req.Body != nil {
+		limitedBody := io.LimitReader(req.Body, 10*1024*1024)
+		body, err = io.ReadAll(limitedBody)
+		req.Body.Close()
+		if err != nil {
+			log.Printf("Failed to read request body: %v", err)
+			return
+		}
+	}
+
+	// Skip processing if there's no body
+	if len(body) == 0 {
+		logDebug("Skipping request body processing (no body)")
 		return
 	}
 
