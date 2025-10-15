@@ -186,6 +186,45 @@ var TemplateFuncs = template.FuncMap{
 	"uuid": func() string {
 		return generateUUID()
 	},
+
+	// Array/slice access - provides consistent interface with other helpers
+	// Note: Go templates have built-in 'index', but we expose it explicitly for clarity
+	"index": func(item any, indices ...any) any {
+		return templateIndex(item, indices...)
+	},
+
+	// Math operations
+	"add": func(a, b any) any {
+		return toNumber(a) + toNumber(b)
+	},
+	"mul": func(a, b any) any {
+		return toNumber(a) * toNumber(b)
+	},
+
+	// Create map/dict - variadic key-value pairs
+	// Usage: {{ dict "key1" "value1" "key2" "value2" }}
+	"dict": func(pairs ...any) map[string]any {
+		if len(pairs)%2 != 0 {
+			log.Printf("dict: odd number of arguments")
+			return map[string]any{}
+		}
+		result := make(map[string]any, len(pairs)/2)
+		for i := 0; i < len(pairs); i += 2 {
+			key, ok := pairs[i].(string)
+			if !ok {
+				log.Printf("dict: non-string key at position %d: %T", i, pairs[i])
+				continue
+			}
+			result[key] = pairs[i+1]
+		}
+		return result
+	},
+
+	// Type checking
+	// Usage: {{ kindIs "string" .value }} or {{ kindIs "slice" .items }}
+	"kindIs": func(kind string, value any) bool {
+		return checkKind(kind, value)
+	},
 }
 
 func generateUUID() string {
@@ -204,6 +243,116 @@ func generateUUID() string {
 		hex.EncodeToString(b[6:8]),
 		hex.EncodeToString(b[8:10]),
 		hex.EncodeToString(b[10:16]))
+}
+
+// templateIndex provides array/slice/map access for templates
+// Supports: index array 0, index map "key", index array 0 "subkey"
+func templateIndex(item any, indices ...any) any {
+	if len(indices) == 0 {
+		return item
+	}
+
+	current := item
+	for _, idx := range indices {
+		switch v := current.(type) {
+		case []any:
+			i, ok := toInt(idx)
+			if !ok || i < 0 || i >= len(v) {
+				log.Printf("index: invalid array index %v for array of length %d", idx, len(v))
+				return nil
+			}
+			current = v[i]
+		case map[string]any:
+			key, ok := idx.(string)
+			if !ok {
+				log.Printf("index: non-string key %v for map", idx)
+				return nil
+			}
+			var exists bool
+			current, exists = v[key]
+			if !exists {
+				log.Printf("index: key %q not found in map", key)
+				return nil
+			}
+		default:
+			log.Printf("index: cannot index type %T", current)
+			return nil
+		}
+	}
+	return current
+}
+
+// toInt converts any numeric value to int
+func toInt(v any) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case int64:
+		return int(n), true
+	case float64:
+		return int(n), true
+	case string:
+		// Try to parse string as int
+		var i int
+		if _, err := fmt.Sscanf(n, "%d", &i); err == nil {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// toNumber converts any numeric value to float64 for math operations
+func toNumber(v any) float64 {
+	switch n := v.(type) {
+	case int:
+		return float64(n)
+	case int64:
+		return float64(n)
+	case float64:
+		return n
+	case float32:
+		return float64(n)
+	case string:
+		var f float64
+		if _, err := fmt.Sscanf(n, "%f", &f); err == nil {
+			return f
+		}
+	}
+	return 0
+}
+
+// checkKind checks if a value is of a specific kind
+// Supported kinds: "string", "number", "bool", "slice", "array", "map", "nil"
+func checkKind(kind string, value any) bool {
+	if value == nil {
+		return kind == "nil"
+	}
+
+	switch kind {
+	case "string":
+		_, ok := value.(string)
+		return ok
+	case "number", "float", "int":
+		switch value.(type) {
+		case int, int64, float64, float32:
+			return true
+		}
+		return false
+	case "bool":
+		_, ok := value.(bool)
+		return ok
+	case "slice", "array":
+		_, ok := value.([]any)
+		return ok
+	case "map":
+		_, ok := value.(map[string]any)
+		return ok
+	case "nil":
+		return value == nil
+	default:
+		log.Printf("kindIs: unknown kind %q", kind)
+		return false
+	}
 }
 
 // ExecuteTemplate applies a template to input data and updates output
