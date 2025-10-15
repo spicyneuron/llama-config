@@ -124,7 +124,6 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, error) {
 	}
 
 	var mergedConfig *Config
-	var configDir string
 
 	for i, configPath := range configPaths {
 		data, err := os.ReadFile(configPath)
@@ -137,9 +136,13 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, error) {
 			return nil, fmt.Errorf("failed to parse config file %s: %w", configPath, err)
 		}
 
+		// Resolve paths relative to this config file's directory
+		configDir := filepath.Dir(configPath)
+		cfg.Proxy.SSLCert = ResolvePath(cfg.Proxy.SSLCert, configDir)
+		cfg.Proxy.SSLKey = ResolvePath(cfg.Proxy.SSLKey, configDir)
+
 		if i == 0 {
 			mergedConfig = &cfg
-			configDir = filepath.Dir(configPath)
 		} else {
 			if cfg.Proxy.Listen != "" {
 				mergedConfig.Proxy.Listen = cfg.Proxy.Listen
@@ -164,14 +167,18 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, error) {
 		}
 	}
 
-	applyOverrides(&mergedConfig.Proxy, overrides)
+	// Get current working directory for resolving CLI override paths
+	pwd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get current directory: %w", err)
+	}
+
+	// Resolve CLI override paths relative to PWD, then apply overrides
+	applyOverrides(&mergedConfig.Proxy, overrides, pwd)
 
 	if mergedConfig.Proxy.Timeout == 0 {
 		mergedConfig.Proxy.Timeout = 60 * time.Second
 	}
-
-	mergedConfig.Proxy.SSLCert = resolveSSLPath(mergedConfig.Proxy.SSLCert, configDir)
-	mergedConfig.Proxy.SSLKey = resolveSSLPath(mergedConfig.Proxy.SSLKey, configDir)
 
 	if err := Validate(mergedConfig); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)
@@ -184,7 +191,7 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, error) {
 	return mergedConfig, nil
 }
 
-func applyOverrides(proxy *ProxyConfig, overrides CliOverrides) {
+func applyOverrides(proxy *ProxyConfig, overrides CliOverrides, pwd string) {
 	if overrides.Listen != "" {
 		proxy.Listen = overrides.Listen
 	}
@@ -195,24 +202,27 @@ func applyOverrides(proxy *ProxyConfig, overrides CliOverrides) {
 		proxy.Timeout = overrides.Timeout
 	}
 	if overrides.SSLCert != "" {
-		proxy.SSLCert = overrides.SSLCert
+		// Resolve CLI paths relative to PWD
+		proxy.SSLCert = ResolvePath(overrides.SSLCert, pwd)
 	}
 	if overrides.SSLKey != "" {
-		proxy.SSLKey = overrides.SSLKey
+		// Resolve CLI paths relative to PWD
+		proxy.SSLKey = ResolvePath(overrides.SSLKey, pwd)
 	}
 	if overrides.Debug {
 		proxy.Debug = overrides.Debug
 	}
 }
 
-func resolveSSLPath(sslPath, configDir string) string {
-	if sslPath == "" {
+// ResolvePath resolves a file path relative to baseDir if not absolute
+func ResolvePath(filePath, baseDir string) string {
+	if filePath == "" {
 		return ""
 	}
 
-	if filepath.IsAbs(sslPath) {
-		return sslPath
+	if filepath.IsAbs(filePath) {
+		return filePath
 	}
 
-	return filepath.Join(configDir, sslPath)
+	return filepath.Join(baseDir, filePath)
 }

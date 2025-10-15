@@ -594,3 +594,62 @@ func TestLoadEmpty(t *testing.T) {
 		t.Errorf("Error should mention empty config list, got: %v", err)
 	}
 }
+
+func TestResolvePath(t *testing.T) {
+	tests := []struct {
+		name     string
+		filePath string
+		baseDir  string
+		want     string
+	}{
+		{
+			name:     "empty path returns empty",
+			filePath: "",
+			baseDir:  "/some/dir",
+			want:     "",
+		},
+		{
+			name:     "absolute path is preserved",
+			filePath: "/absolute/path/cert.pem",
+			baseDir:  "/config/dir",
+			want:     "/absolute/path/cert.pem",
+		},
+		{
+			name:     "relative path joined with base",
+			filePath: "cert.pem",
+			baseDir:  "/config/dir",
+			want:     "/config/dir/cert.pem",
+		},
+		{
+			name:     "relative path with subdirectory",
+			filePath: "ssl/cert.pem",
+			baseDir:  "/config/dir",
+			want:     "/config/dir/ssl/cert.pem",
+		},
+		{
+			name:     "relative path with parent reference",
+			filePath: "../certs/cert.pem",
+			baseDir:  "/config/dir",
+			want:     "/config/certs/cert.pem",
+		},
+		{
+			name:     "current dir reference",
+			filePath: "./cert.pem",
+			baseDir:  "/config/dir",
+			want:     "/config/dir/cert.pem",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ResolvePath(tt.filePath, tt.baseDir)
+			// Normalize paths for comparison (handles OS differences)
+			want := filepath.Clean(tt.want)
+			got = filepath.Clean(got)
+
+			if got != want {
+				t.Errorf("ResolvePath(%q, %q) = %q, want %q", tt.filePath, tt.baseDir, got, want)
+			}
+		})
+	}
+}
