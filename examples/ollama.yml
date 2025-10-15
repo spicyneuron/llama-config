@@ -1,0 +1,125 @@
+# Complete Ollama ↔ OpenAI Transformation
+#
+# This config enables full bidirectional transformation between Ollama and OpenAI formats:
+# 1. Ollama chat requests → OpenAI format
+# 2. OpenAI chat responses → Ollama format
+# 3. Ollama model list requests → OpenAI format
+# 4. OpenAI model list responses → Ollama format
+#
+# Usage:
+#   llama-config-proxy -config examples/ollama-complete.yml -target http://localhost:8080
+
+proxy:
+  listen: "localhost:11434"  # Standard Ollama port
+  target: "http://localhost:8080"  # Your OpenAI-compatible backend
+
+rules:
+  # Chat completions: Ollama → OpenAI
+  - methods: POST
+    paths: ^/api/chat$
+    target_path: /v1/chat/completions
+
+    on_request:
+      # Transform Ollama request to OpenAI format
+      - match_body:
+          options: ".*"
+        template: |
+          {
+            "model": {{ toJson .model }},
+            "messages": {{ toJson .messages }}
+            {{- if .options.temperature }},
+            "temperature": {{ .options.temperature }}
+            {{- end }}
+            {{- if .options.top_p }},
+            "top_p": {{ .options.top_p }}
+            {{- end }}
+            {{- if .options.top_k }},
+            "top_k": {{ .options.top_k }}
+            {{- end }}
+            {{- if .options.num_predict }},
+            "max_tokens": {{ .options.num_predict }}
+            {{- end }}
+            {{- if .options.seed }},
+            "seed": {{ .options.seed }}
+            {{- end }}
+            {{- if .options.stop }},
+            "stop": {{ toJson .options.stop }}
+            {{- end }}
+            {{- if .options.repeat_penalty }},
+            "frequency_penalty": {{ add .options.repeat_penalty -1 }}
+            {{- end }}
+            {{- if .format }}
+              {{- if kindIs "string" .format }}
+                {{- if eq .format "json" }},
+            "response_format": {{ toJson (dict "type" "json_object") }}
+                {{- end }}
+              {{- else if kindIs "map" .format }}
+                {{- if .format.type }},
+            "response_format": {{ toJson (dict "type" "json_object") }}
+                {{- end }}
+              {{- end }}
+            {{- end }}
+            {{- if .tools }},
+            "tools": {{ toJson .tools }}
+            {{- end }}
+            {{- if ne .stream nil }},
+            "stream": {{ .stream }}
+            {{- end }}
+          }
+
+    on_response:
+      # Transform OpenAI response back to Ollama format
+      - match_body:
+          object: chat\.completion
+        template: |
+          {
+            "model": {{ toJson .model }},
+            "created_at": {{ toJson (isoTime now) }},
+            "message": {{ toJson (index .choices 0 "message") }},
+            "done": true
+            {{- if index .choices 0 "finish_reason" }},
+            "done_reason": {{ toJson (index .choices 0 "finish_reason") }}
+            {{- end }}
+            {{- if .usage }}
+              {{- if .usage.prompt_tokens }},
+            "prompt_eval_count": {{ .usage.prompt_tokens }}
+              {{- end }}
+              {{- if .usage.completion_tokens }},
+            "eval_count": {{ .usage.completion_tokens }}
+              {{- end }}
+              {{- if .usage.total_tokens }},
+            "total_duration": {{ mul .usage.total_tokens 100000000 }}
+              {{- end }}
+            {{- end }}
+          }
+
+  # Model list: Ollama → OpenAI
+  - methods: GET
+    paths: ^/api/tags$
+    target_path: /v1/models
+
+    on_response:
+      # Transform OpenAI models response to Ollama tags format
+      - match_body:
+          object: list
+        template: |
+          {
+            "models": [
+              {{- range $i, $model := .data }}
+              {{- if $i }},{{ end }}
+              {
+                "name": {{ toJson $model.id }},
+                "modified_at": {{ toJson (isoTime now) }},
+                "size": 0,
+                "digest": "",
+                "details": {
+                  "format": "gguf",
+                  "family": "unknown",
+                  "parameter_size": "unknown",
+                  "quantization_level": "unknown"
+                }
+              }
+              {{- end }}
+            ]
+          }
+

@@ -75,17 +75,21 @@ func validateRule(rule *Rule, index int) error {
 
 func validateOperation(op *Operation, ruleIndex, opIndex int, opType string) error {
 	// Validate match_body patterns
-	for key, patterns := range op.MatchBody {
+	for key := range op.MatchBody {
+		patterns := op.MatchBody[key]
 		if err := patterns.Validate(); err != nil {
 			return fmt.Errorf("rule %d %s %d match_body '%s': %w", ruleIndex, opType, opIndex, key, err)
 		}
+		op.MatchBody[key] = patterns
 	}
 
 	// Validate match_headers patterns
-	for key, patterns := range op.MatchHeaders {
+	for key := range op.MatchHeaders {
+		patterns := op.MatchHeaders[key]
 		if err := patterns.Validate(); err != nil {
 			return fmt.Errorf("rule %d %s %d match_headers '%s': %w", ruleIndex, opType, opIndex, key, err)
 		}
+		op.MatchHeaders[key] = patterns
 	}
 
 	// Template is a valid standalone operation
