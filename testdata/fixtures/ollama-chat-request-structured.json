@@ -1,0 +1,29 @@
+{
+  "model": "llama3.1",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Ollama is 22 years old and busy saving the world. Return a JSON object with the age and availability."
+    }
+  ],
+  "stream": false,
+  "format": {
+    "type": "object",
+    "properties": {
+      "age": {
+        "type": "integer"
+      },
+      "available": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "age",
+      "available"
+    ]
+  },
+  "options": {
+    "temperature": 0
+  }
+}
+
