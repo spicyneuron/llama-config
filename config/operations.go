@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"maps"
 	"text/template"
 	"time"
 )
@@ -92,7 +93,8 @@ func processOperations(data map[string]any, headers map[string]string, operation
 		if op.Template != "" && templates[i] != nil {
 			logDebug("      Executing template for operation %d", i)
 			if ExecuteTemplate(templates[i], data, data) {
-				appliedValues["template"] = "<applied>"
+				// Track what the template produced
+				maps.Copy(appliedValues, data)
 				anyApplied = true
 			}
 		}

@@ -252,6 +252,78 @@ rules:
 	}
 }
 
+func TestTemplateExecutionTracking(t *testing.T) {
+	// Test that template execution properly tracks what was applied
+	configContent := `
+proxy:
+  listen: "localhost:8081"
+  target: "http://localhost:8080"
+
+rules:
+  - methods: POST
+    paths: /api/chat
+    on_request:
+      - template: |
+          {
+            "model": "{{ .model }}",
+            "temperature": 0.8,
+            "max_tokens": 100
+          }
+`
+	cfg := mustParseConfig(t, configContent)
+
+	// Simulate processing a request with the template
+	data := map[string]any{
+		"model":    "llama3",
+		"messages": []any{map[string]string{"role": "user", "content": "test"}},
+	}
+	headers := make(map[string]string)
+
+	modified, appliedValues := ProcessRequest(data, headers, cfg.Rules[0].OpRule)
+
+	if !modified {
+		t.Error("Expected template to be applied")
+	}
+
+	// The appliedValues should contain the actual template output, not just "<applied>"
+	if len(appliedValues) == 0 {
+		t.Error("Expected appliedValues to be populated")
+	}
+
+	// Check that appliedValues contains the actual fields from the template
+	if _, ok := appliedValues["model"]; !ok {
+		t.Error("Expected appliedValues to contain 'model' field")
+	}
+
+	if _, ok := appliedValues["temperature"]; !ok {
+		t.Error("Expected appliedValues to contain 'temperature' field")
+	}
+
+	if _, ok := appliedValues["max_tokens"]; !ok {
+		t.Error("Expected appliedValues to contain 'max_tokens' field")
+	}
+
+	// The old buggy behavior would have been:
+	// appliedValues = {"template": "<applied>"}
+	// So let's explicitly check it's NOT that
+	if val, ok := appliedValues["template"]; ok && val == "<applied>" {
+		t.Error("appliedValues should not contain the marker '<applied>', but actual template output")
+	}
+
+	// Verify the actual data was also modified correctly
+	if model, ok := data["model"].(string); !ok || model != "llama3" {
+		t.Errorf("Expected model to be 'llama3', got %v", data["model"])
+	}
+
+	if temp, ok := data["temperature"].(float64); !ok || temp != 0.8 {
+		t.Errorf("Expected temperature to be 0.8, got %v", data["temperature"])
+	}
+
+	if tokens, ok := data["max_tokens"].(float64); !ok || tokens != 100 {
+		t.Errorf("Expected max_tokens to be 100, got %v", data["max_tokens"])
+	}
+}
+
 func TestLoadInvalidTemplate(t *testing.T) {
 	configContent := `
 proxy:
