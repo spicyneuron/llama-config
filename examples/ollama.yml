@@ -7,7 +7,7 @@
 # 4. OpenAI model list responses → Ollama format
 #
 # Usage:
-#   llama-config-proxy -config examples/ollama-complete.yml -target http://localhost:8080
+#   llama-config-proxy -config examples/ollama.yml -target http://localhost:8080
 
 proxy:
   listen: "localhost:11434"  # Standard Ollama port
@@ -68,17 +68,46 @@ rules:
           }
 
     on_response:
-      # Transform OpenAI response back to Ollama format
+      # Transform OpenAI streaming chunks to Ollama format
+      # Match specifically on chunks (has delta field, not message field)
       - match_body:
-          object: chat\.completion
+          object: chat\.completion\.chunk
+        template: |
+          {{- $choice := index .choices 0 }}
+          {{- $delta := index $choice "delta" }}
+          {{- $finishReason := index $choice "finish_reason" }}
+          {{- $content := "" }}
+          {{- if $delta }}
+            {{- with index $delta "content" }}
+              {{- $content = . }}
+            {{- end }}
+          {{- end }}
+          {
+            "model": {{ toJson .model }},
+            "created_at": {{ toJson (isoTime now) }},
+            "message": {
+              "role": "assistant",
+              "content": {{ toJson $content }}
+            },
+            "done": {{ if $finishReason }}true{{ else }}false{{ end }}
+            {{- if $finishReason }},
+            "done_reason": {{ toJson $finishReason }}
+            {{- end }}
+          }
+
+      # Transform OpenAI non-streaming response to Ollama format
+      # Match specifically on completions (has message field, not delta field)
+      - match_body:
+          object: ^chat\.completion$
         template: |
           {
             "model": {{ toJson .model }},
             "created_at": {{ toJson (isoTime now) }},
             "message": {{ toJson (index .choices 0 "message") }},
             "done": true
-            {{- if index .choices 0 "finish_reason" }},
-            "done_reason": {{ toJson (index .choices 0 "finish_reason") }}
+            {{- $finishReason := index .choices 0 "finish_reason" }}
+            {{- if $finishReason }},
+            "done_reason": {{ toJson $finishReason }}
             {{- end }}
             {{- if .usage }}
               {{- if .usage.prompt_tokens }},

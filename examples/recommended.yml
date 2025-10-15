@@ -1,32 +1,15 @@
-# Proxy Configuration
 proxy:
-
-  # All proxy options can also be set from CLI flags
   listen: "localhost:8081"
   target: "http://localhost:8080"
 
-  # timeout: 30s
-  # ssl_cert: certificate.pem
-  # ssl_key: key.pem
-  # debug: true
-
-# Request Rules
 rules:
-
-  # `methods`, `paths`, `match_body`, and `match_headers` field values are regex
-  # patterns. Include a string or array of strings.
   - methods: POST
     paths: .*/chat/completions
 
-    # Optionally normalize the request path.
+    # Normalize request path
     target_path: /v1/chat/completions
 
-    # All operations are processed unless a `stop: true` is matched. Operations
-    # without match_body/match_headers always match. Each operation should contain
-    # one or more actions. Within an operation, actions execute in this order:
-    # template -> default -> merge -> delete.
     on_request:
-      # Apply to all requests
       - default:
           max_tokens: 10000
 
@@ -36,7 +19,7 @@ rules:
         merge:
           model: deepseek-r1
 
-      # Model-specific configurations
+      # Apply model-specific configurations
       - match_body:
           model: deepseek-?(v3|r1)
         merge:
@@ -82,13 +65,3 @@ rules:
           temperature: 0.6
           top_k: 20
           top_p: 0.95
-
-  - methods: POST
-    paths: .*/infill
-    on_request:
-      - merge:
-          temperature: 0.7
-          top_k: 20
-          top_p: 0.8
-          min_p: 0
-          repeat_penalty: 1.05
