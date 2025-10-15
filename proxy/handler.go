@@ -31,9 +31,11 @@ func logDebug(format string, args ...any) {
 	}
 }
 
-// FindMatchingRule returns the first rule that matches the request
-func FindMatchingRule(req *http.Request, cfg *config.Config) *config.Rule {
+// FindMatchingRules returns all rules that match the request sequentially
+func FindMatchingRules(req *http.Request, cfg *config.Config) []*config.Rule {
 	logDebug("Evaluating %d rules for %s %s", len(cfg.Rules), req.Method, req.URL.Path)
+
+	var matchedRules []*config.Rule
 
 	for i := range cfg.Rules {
 		rule := &cfg.Rules[i]
@@ -45,33 +47,21 @@ func FindMatchingRule(req *http.Request, cfg *config.Config) *config.Rule {
 
 		if methodMatch && pathMatch {
 			logDebug("  ✓ Rule %d matched!", i)
-			return rule
+			matchedRules = append(matchedRules, rule)
 		}
 	}
-	logDebug("  No rules matched")
-	return nil
+
+	if len(matchedRules) == 0 {
+		logDebug("  No rules matched")
+	} else {
+		logDebug("  Total matched rules: %d", len(matchedRules))
+	}
+
+	return matchedRules
 }
 
-// ModifyRequest processes the request through matching rules
+// ModifyRequest processes the request through all matching rules sequentially
 func ModifyRequest(req *http.Request, cfg *config.Config) {
-	matchingRule := FindMatchingRule(req, cfg)
-	if matchingRule == nil {
-		logDebug("No matching rule for %s %s", req.Method, req.URL.Path)
-		return
-	}
-
-	// Store the matching rule in context for response processing
-	ctx := context.WithValue(req.Context(), ruleContextKey, matchingRule)
-	*req = *req.WithContext(ctx)
-
-	logDebug("Processing request with matching rule (on_request ops: %d)", len(matchingRule.OnRequest))
-
-	if matchingRule.TargetPath != "" {
-		originalPath := req.URL.Path
-		req.URL.Path = matchingRule.TargetPath
-		logDebug("Rewrote request path from %s to %s", originalPath, matchingRule.TargetPath)
-	}
-
 	// Read and limit body size to 10MB to prevent memory exhaustion
 	var body []byte
 	var err error
@@ -85,23 +75,23 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 		}
 	}
 
-	// Skip processing if there's no body
-	if len(body) == 0 {
-		logDebug("Skipping request body processing (no body)")
-		return
-	}
-
 	if debugMode && len(body) > 0 {
 		var prettyJSON bytes.Buffer
 		json.Indent(&prettyJSON, body, "", "  ")
 		logDebug("Inbound request body:\n%s", prettyJSON.String())
 	}
 
+	// Parse JSON body if present
 	var data map[string]any
-	if err := json.Unmarshal(body, &data); err != nil {
-		log.Printf("Failed to parse JSON request: %v", err)
-		req.Body = io.NopCloser(bytes.NewReader(body))
-		return
+	hasJSONBody := false
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &data); err == nil {
+			hasJSONBody = true
+		} else {
+			logDebug("Request body is not JSON, will pass through unchanged")
+			req.Body = io.NopCloser(bytes.NewReader(body))
+			// Still check for matching rules that might modify path/headers
+		}
 	}
 
 	// Extract headers as map[string]string for matching
@@ -112,21 +102,80 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 		}
 	}
 
-	modified, appliedValues := config.ProcessRequest(data, headers, matchingRule.OpRule)
+	// Find all matching rules (based on method and path)
+	matchingRules := FindMatchingRules(req, cfg)
 
-	modifiedBody, err := json.Marshal(data)
-	if err != nil {
-		log.Printf("Failed to marshal modified JSON: %v", err)
-		req.Body = io.NopCloser(bytes.NewReader(body))
+	if len(matchingRules) == 0 {
+		logDebug("No matching rules for %s %s", req.Method, req.URL.Path)
+		if len(body) > 0 {
+			req.Body = io.NopCloser(bytes.NewReader(body))
+		}
 		return
 	}
 
-	req.Body = io.NopCloser(bytes.NewReader(modifiedBody))
-	req.ContentLength = int64(len(modifiedBody))
+	logDebug("Processing request with %d matching rule(s)", len(matchingRules))
 
-	if modified {
-		appliedJSON, _ := json.MarshalIndent(appliedValues, "", "  ")
-		logDebug("Applied request changes:\n%s", string(appliedJSON))
+	// Track the last matched rule for response processing
+	var lastMatchedRule *config.Rule
+	anyModified := false
+	allAppliedValues := make(map[string]any)
+
+	// Apply each matching rule sequentially
+	for ruleIdx, rule := range matchingRules {
+		lastMatchedRule = rule
+		logDebug("Applying rule %d/%d (on_request ops: %d)", ruleIdx+1, len(matchingRules), len(rule.OnRequest))
+
+		// Handle target path rewriting
+		if rule.TargetPath != "" {
+			originalPath := req.URL.Path
+			req.URL.Path = rule.TargetPath
+			logDebug("Rewrote request path from %s to %s", originalPath, rule.TargetPath)
+		}
+
+		// Skip body processing if no JSON body
+		if !hasJSONBody {
+			logDebug("Skipping rule %d body processing (no JSON body)", ruleIdx+1)
+			continue
+		}
+
+		// Apply operations to the current (possibly modified) data
+		modified, appliedValues := config.ProcessRequest(data, headers, rule.OpRule)
+
+		if modified {
+			anyModified = true
+			// Merge applied values for debug output
+			for k, v := range appliedValues {
+				allAppliedValues[k] = v
+			}
+			logDebug("Rule %d/%d modified request", ruleIdx+1, len(matchingRules))
+		}
+	}
+
+	// Store the last matching rule in context for response processing
+	if lastMatchedRule != nil {
+		ctx := context.WithValue(req.Context(), ruleContextKey, lastMatchedRule)
+		*req = *req.WithContext(ctx)
+	}
+
+	// Write modified body back if JSON was processed
+	if hasJSONBody {
+		modifiedBody, err := json.Marshal(data)
+		if err != nil {
+			log.Printf("Failed to marshal modified JSON: %v", err)
+			req.Body = io.NopCloser(bytes.NewReader(body))
+			return
+		}
+
+		req.Body = io.NopCloser(bytes.NewReader(modifiedBody))
+		req.ContentLength = int64(len(modifiedBody))
+
+		if anyModified {
+			appliedJSON, _ := json.MarshalIndent(allAppliedValues, "", "  ")
+			logDebug("Total applied request changes:\n%s", string(appliedJSON))
+		}
+	} else if len(body) > 0 {
+		// Restore original non-JSON body
+		req.Body = io.NopCloser(bytes.NewReader(body))
 	}
 }
 

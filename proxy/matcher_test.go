@@ -7,7 +7,7 @@ import (
 	"github.com/spicyneuron/llama-config-proxy/config"
 )
 
-func TestFindMatchingRule(t *testing.T) {
+func TestFindMatchingRules(t *testing.T) {
 	cfg := &config.Config{
 		Rules: []config.Rule{
 			{
@@ -26,76 +26,64 @@ func TestFindMatchingRule(t *testing.T) {
 	}
 
 	tests := []struct {
-		name      string
-		method    string
-		path      string
-		wantIndex int // -1 for no match
+		name        string
+		method      string
+		path        string
+		wantIndices []int // indices of rules that should match
 	}{
 		{
-			name:      "exact match first rule",
-			method:    "POST",
-			path:      "/v1/chat/completions",
-			wantIndex: 0,
+			name:        "exact match first and third rules",
+			method:      "POST",
+			path:        "/v1/chat/completions",
+			wantIndices: []int{0, 2}, // First rule matches exactly, third matches all
 		},
 		{
-			name:      "regex match second rule",
-			method:    "GET",
-			path:      "/api/models",
-			wantIndex: 1,
+			name:        "regex match second and third rules",
+			method:      "GET",
+			path:        "/api/models",
+			wantIndices: []int{1, 2}, // Second rule matches /api/.*, third matches all
 		},
 		{
-			name:      "POST also matches second rule",
-			method:    "POST",
-			path:      "/api/generate",
-			wantIndex: 1, // But first rule doesn't match, so second rule wins
+			name:        "POST matches second and third rules",
+			method:      "POST",
+			path:        "/api/generate",
+			wantIndices: []int{1, 2}, // Second rule matches, third matches all
 		},
 		{
-			name:      "fallback to third rule",
-			method:    "DELETE",
-			path:      "/other/endpoint",
-			wantIndex: 2,
+			name:        "only third rule matches",
+			method:      "DELETE",
+			path:        "/other/endpoint",
+			wantIndices: []int{2}, // Only the catch-all rule
 		},
 		{
-			name:      "case insensitive method",
-			method:    "post",
-			path:      "/v1/chat/completions",
-			wantIndex: 0,
+			name:        "case insensitive method",
+			method:      "post",
+			path:        "/v1/chat/completions",
+			wantIndices: []int{0, 2}, // Same as first test
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(tt.method, tt.path, nil)
-			rule := FindMatchingRule(req, cfg)
+			rules := FindMatchingRules(req, cfg)
 
-			if tt.wantIndex == -1 {
-				if rule != nil {
-					t.Errorf("FindMatchingRule() = %v, want nil", rule)
-				}
-			} else {
-				if rule == nil {
-					t.Fatal("FindMatchingRule() = nil, want non-nil")
-				}
+			if len(rules) != len(tt.wantIndices) {
+				t.Fatalf("FindMatchingRules() returned %d rules, want %d", len(rules), len(tt.wantIndices))
+			}
 
-				// Find which rule was matched
-				var gotIndex int = -1
-				for i := range cfg.Rules {
-					if rule == &cfg.Rules[i] {
-						gotIndex = i
-						break
-					}
-				}
-
-				if gotIndex != tt.wantIndex {
-					t.Errorf("FindMatchingRule() matched rule %d, want %d", gotIndex, tt.wantIndex)
+			// Verify each matched rule
+			for i, wantIndex := range tt.wantIndices {
+				if rules[i] != &cfg.Rules[wantIndex] {
+					t.Errorf("Rule %d: got rule index %d, want %d", i, getRuleIndex(rules[i], cfg), wantIndex)
 				}
 			}
 		})
 	}
 }
 
-func TestFindMatchingRuleFirstMatch(t *testing.T) {
-	// Test that first matching rule wins
+func TestFindMatchingRulesStacking(t *testing.T) {
+	// Test that multiple matching rules are all returned in order
 	cfg := &config.Config{
 		Rules: []config.Rule{
 			{
@@ -106,13 +94,39 @@ func TestFindMatchingRuleFirstMatch(t *testing.T) {
 				Methods: newPatternField("POST"),
 				Paths:   newPatternField("/api/chat"),
 			},
+			{
+				Methods: newPatternField("POST"),
+				Paths:   newPatternField("/api/.*"),
+			},
 		},
 	}
 
 	req := httptest.NewRequest("POST", "/api/chat", nil)
-	rule := FindMatchingRule(req, cfg)
+	rules := FindMatchingRules(req, cfg)
 
-	if rule != &cfg.Rules[0] {
-		t.Error("Should match first rule, not second")
+	// All three rules should match /api/chat
+	if len(rules) != 3 {
+		t.Fatalf("Expected 3 matching rules, got %d", len(rules))
 	}
+
+	// Verify order: should be rules 0, 1, 2
+	if rules[0] != &cfg.Rules[0] {
+		t.Error("First matched rule should be rule 0")
+	}
+	if rules[1] != &cfg.Rules[1] {
+		t.Error("Second matched rule should be rule 1")
+	}
+	if rules[2] != &cfg.Rules[2] {
+		t.Error("Third matched rule should be rule 2")
+	}
+}
+
+// Helper to get rule index
+func getRuleIndex(rule *config.Rule, cfg *config.Config) int {
+	for i := range cfg.Rules {
+		if rule == &cfg.Rules[i] {
+			return i
+		}
+	}
+	return -1
 }

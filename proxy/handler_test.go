@@ -364,3 +364,191 @@ func TestModifyRequestNoMatchingRule(t *testing.T) {
 		t.Errorf("Expected path to remain %s, got %s", originalPath, req.URL.Path)
 	}
 }
+
+func TestModifyRequestStackingRules(t *testing.T) {
+	cfg := &config.Config{
+		Proxy: config.ProxyConfig{
+			Listen: "localhost:8080",
+			Target: "http://localhost:9000",
+		},
+		Rules: []config.Rule{
+			// Rule 1: Adds temperature
+			{
+				Methods: newPatternField("POST"),
+				Paths:   newPatternField("^/api/chat$"),
+				OnRequest: []config.Operation{
+					{
+						Default: map[string]any{
+							"temperature": 0.7,
+						},
+					},
+				},
+			},
+			// Rule 2: Adds max_tokens (should also match and apply)
+			{
+				Methods: newPatternField("POST"),
+				Paths:   newPatternField("^/api/chat$"),
+				OnRequest: []config.Operation{
+					{
+						Default: map[string]any{
+							"max_tokens": 100,
+						},
+					},
+				},
+			},
+			// Rule 3: Adds stream flag (should also match and apply)
+			{
+				Methods: newPatternField("POST"),
+				Paths:   newPatternField("^/api/chat$"),
+				OnRequest: []config.Operation{
+					{
+						Default: map[string]any{
+							"stream": false,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Validate and compile the config
+	if err := config.Validate(cfg); err != nil {
+		t.Fatalf("Config validation failed: %v", err)
+	}
+
+	// Compile templates
+	if err := config.CompileTemplates(cfg); err != nil {
+		t.Fatalf("Template compilation failed: %v", err)
+	}
+
+	// Create POST request with JSON body
+	reqData := map[string]any{
+		"model":  "llama3",
+		"prompt": "Hello",
+	}
+	reqBody, _ := json.Marshal(reqData)
+	req := httptest.NewRequest("POST", "/api/chat", bytes.NewReader(reqBody))
+
+	// Apply modifications
+	ModifyRequest(req, cfg)
+
+	// Read and verify modified body
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatalf("Failed to read modified body: %v", err)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(body, &result); err != nil {
+		t.Fatalf("Failed to unmarshal modified body: %v", err)
+	}
+
+	// Verify all three rules applied their defaults
+	if temp, ok := result["temperature"].(float64); !ok || temp != 0.7 {
+		t.Errorf("Expected temperature to be 0.7, got %v", result["temperature"])
+	}
+
+	if maxTokens, ok := result["max_tokens"].(float64); !ok || maxTokens != 100 {
+		t.Errorf("Expected max_tokens to be 100, got %v", result["max_tokens"])
+	}
+
+	if stream, ok := result["stream"].(bool); !ok || stream != false {
+		t.Errorf("Expected stream to be false, got %v", result["stream"])
+	}
+
+	// Verify original fields are preserved
+	if model, ok := result["model"].(string); !ok || model != "llama3" {
+		t.Errorf("Expected model to be llama3, got %v", result["model"])
+	}
+
+	if prompt, ok := result["prompt"].(string); !ok || prompt != "Hello" {
+		t.Errorf("Expected prompt to be Hello, got %v", result["prompt"])
+	}
+}
+
+func TestModifyRequestStackingWithConditionalMatch(t *testing.T) {
+	cfg := &config.Config{
+		Proxy: config.ProxyConfig{
+			Listen: "localhost:8080",
+			Target: "http://localhost:9000",
+		},
+		Rules: []config.Rule{
+			// Rule 1: Adds type field
+			{
+				Methods: newPatternField("POST"),
+				Paths:   newPatternField("^/api/chat$"),
+				OnRequest: []config.Operation{
+					{
+						Merge: map[string]any{
+							"type": "completion",
+						},
+					},
+				},
+			},
+			// Rule 2: Only applies if type is "completion" (set by rule 1)
+			{
+				Methods: newPatternField("POST"),
+				Paths:   newPatternField("^/api/chat$"),
+				OnRequest: []config.Operation{
+					{
+						MatchBody: map[string]config.PatternField{
+							"type": newPatternField("^completion$"),
+						},
+						Merge: map[string]any{
+							"completion_config": map[string]any{
+								"enabled": true,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Validate and compile the config
+	if err := config.Validate(cfg); err != nil {
+		t.Fatalf("Config validation failed: %v", err)
+	}
+
+	// Compile templates
+	if err := config.CompileTemplates(cfg); err != nil {
+		t.Fatalf("Template compilation failed: %v", err)
+	}
+
+	// Create POST request with JSON body (no type field)
+	reqData := map[string]any{
+		"model":  "llama3",
+		"prompt": "Hello",
+	}
+	reqBody, _ := json.Marshal(reqData)
+	req := httptest.NewRequest("POST", "/api/chat", bytes.NewReader(reqBody))
+
+	// Apply modifications
+	ModifyRequest(req, cfg)
+
+	// Read and verify modified body
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatalf("Failed to read modified body: %v", err)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(body, &result); err != nil {
+		t.Fatalf("Failed to unmarshal modified body: %v", err)
+	}
+
+	// Verify rule 1 added the type
+	if typeVal, ok := result["type"].(string); !ok || typeVal != "completion" {
+		t.Errorf("Expected type to be 'completion', got %v", result["type"])
+	}
+
+	// Verify rule 2 added completion_config (because rule 1 set type=completion)
+	completionConfig, ok := result["completion_config"].(map[string]any)
+	if !ok {
+		t.Fatalf("Expected completion_config to be present, got %v", result["completion_config"])
+	}
+
+	if enabled, ok := completionConfig["enabled"].(bool); !ok || !enabled {
+		t.Errorf("Expected completion_config.enabled to be true, got %v", completionConfig["enabled"])
+	}
+}

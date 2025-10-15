@@ -51,11 +51,12 @@ data: [DONE]
 		},
 	}
 
-	// Find matching rule
-	rule := FindMatchingRule(resp.Request, cfg)
-	if rule == nil {
-		t.Fatal("No matching rule found")
+	// Find matching rules
+	rules := FindMatchingRules(resp.Request, cfg)
+	if len(rules) == 0 {
+		t.Fatal("No matching rules found")
 	}
+	rule := rules[0]
 
 	// Apply streaming transformation
 	err = ModifyStreamingResponse(resp, rule)
@@ -155,11 +156,12 @@ func TestModifyStreamingResponse_OllamaFormat(t *testing.T) {
 		},
 	}
 
-	// Find matching rule
-	rule := FindMatchingRule(resp.Request, cfg)
-	if rule == nil {
-		t.Fatal("No matching rule found")
+	// Find matching rules
+	rules := FindMatchingRules(resp.Request, cfg)
+	if len(rules) == 0 {
+		t.Fatal("No matching rules found")
 	}
+	rule := rules[0]
 
 	// Apply streaming transformation
 	err := ModifyStreamingResponse(resp, rule)
@@ -233,10 +235,11 @@ data: keep-alive
 		},
 	}
 
-	rule := FindMatchingRule(resp.Request, cfg)
-	if rule == nil {
-		t.Fatal("No matching rule found")
+	rules := FindMatchingRules(resp.Request, cfg)
+	if len(rules) == 0 {
+		t.Fatal("No matching rules found")
 	}
+	rule := rules[0]
 
 	// Apply streaming transformation (should pass through)
 	err := ModifyStreamingResponse(resp, rule)
@@ -320,11 +323,12 @@ func TestModifyResponse_RoutesToStreaming(t *testing.T) {
 				Request: req,
 			}
 
-			// Find and store matching rule in context
-			rule := FindMatchingRule(req, cfg)
-			if rule == nil {
-				t.Fatal("No matching rule")
+			// Find and store matching rules in context
+			rules := FindMatchingRules(req, cfg)
+			if len(rules) == 0 {
+				t.Fatal("No matching rules")
 			}
+			rule := rules[0]
 
 			// Store rule in request context (mimicking what ModifyRequest does)
 			ctx := context.WithValue(req.Context(), ruleContextKey, rule)
