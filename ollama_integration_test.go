@@ -351,6 +351,19 @@ func TestOpenAIModelsToOllamaTags(t *testing.T) {
 		if _, exists := firstModel["details"]; !exists {
 			t.Error("Expected details field in model")
 		}
+
+		// Verify details structure matches Ollama format
+		details, ok := firstModel["details"].(map[string]any)
+		if !ok {
+			t.Fatalf("Expected details to be a map, got %T", firstModel["details"])
+		}
+
+		expectedFields := []string{"format", "family", "families", "parameter_size", "quantization_level"}
+		for _, field := range expectedFields {
+			if _, exists := details[field]; !exists {
+				t.Errorf("Expected details.%s field to exist", field)
+			}
+		}
 	})
 }
 

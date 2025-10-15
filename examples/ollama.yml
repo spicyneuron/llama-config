@@ -129,6 +129,7 @@ rules:
 
     on_response:
       # Transform OpenAI models response to Ollama tags format
+      # Note: Uses realistic placeholder values for fields not available from OpenAI
       - match_body:
           object: list
         template: |
@@ -139,13 +140,14 @@ rules:
               {
                 "name": {{ toJson $model.id }},
                 "modified_at": {{ toJson (isoTime now) }},
-                "size": 0,
-                "digest": "",
+                "size": 4000000000,
+                "digest": {{ toJson (uuid) }},
                 "details": {
                   "format": "gguf",
-                  "family": "unknown",
-                  "parameter_size": "unknown",
-                  "quantization_level": "unknown"
+                  "family": "llama",
+                  "families": null,
+                  "parameter_size": "7B",
+                  "quantization_level": "Q4_0"
                 }
               }
               {{- end }}
