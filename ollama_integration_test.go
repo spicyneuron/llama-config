@@ -52,7 +52,7 @@ func TestOllamaChatRequestToOpenAI(t *testing.T) {
 	ollamaRequest := loadTestFixture(t, "ollama-chat-request.json")
 
 	// Load the complete Ollama transformation config
-	cfg := loadTestConfig(t, "ollama-complete.yml")
+	cfg := loadTestConfig(t, "ollama.yml")
 
 	// Create a test request
 	bodyBytes, _ := json.Marshal(ollamaRequest)
@@ -116,7 +116,7 @@ func TestOllamaChatRequestWithFormatToOpenAI(t *testing.T) {
 	// Load Ollama structured output request fixture
 	ollamaRequest := loadTestFixture(t, "ollama-chat-request-structured.json")
 
-	cfg := loadTestConfig(t, "ollama-complete.yml")
+	cfg := loadTestConfig(t, "ollama.yml")
 
 	bodyBytes, _ := json.Marshal(ollamaRequest)
 	req := httptest.NewRequest("POST", "/api/chat", bytes.NewReader(bodyBytes))
@@ -149,7 +149,7 @@ func TestOllamaChatRequestWithToolsToOpenAI(t *testing.T) {
 	// Load Ollama tools request fixture
 	ollamaRequest := loadTestFixture(t, "ollama-chat-request-tools.json")
 
-	cfg := loadTestConfig(t, "ollama-complete.yml")
+	cfg := loadTestConfig(t, "ollama.yml")
 
 	bodyBytes, _ := json.Marshal(ollamaRequest)
 	req := httptest.NewRequest("POST", "/api/chat", bytes.NewReader(bodyBytes))
@@ -178,7 +178,7 @@ func TestOpenAIResponseToOllamaChat(t *testing.T) {
 	// Load OpenAI response fixture
 	openaiResponse := loadTestFixture(t, "openai-chat-response.json")
 
-	cfg := loadTestConfig(t, "ollama-complete.yml")
+	cfg := loadTestConfig(t, "ollama.yml")
 
 	// Create a simple request to trigger the response transformation
 	req := httptest.NewRequest("POST", "/api/chat", bytes.NewReader([]byte("{}")))
@@ -274,7 +274,7 @@ func TestOpenAIModelsToOllamaTags(t *testing.T) {
 	// Load OpenAI models response fixture
 	openaiModels := loadTestFixture(t, "openai-models-response.json")
 
-	cfg := loadTestConfig(t, "ollama-complete.yml")
+	cfg := loadTestConfig(t, "ollama.yml")
 
 	// Create a request
 	req := httptest.NewRequest("GET", "/api/tags", nil)
