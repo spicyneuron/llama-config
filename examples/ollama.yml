@@ -9,9 +9,7 @@ rules:
 
     on_request:
       # Transform Ollama request to OpenAI format
-      - match_body:
-          options: ".*"
-        template: |
+      - template: |
           {
             "model": {{ toJson .model }},
             "messages": {{ toJson .messages }}
