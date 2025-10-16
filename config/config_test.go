@@ -279,7 +279,7 @@ rules:
 	}
 	headers := make(map[string]string)
 
-	modified, appliedValues := ProcessRequest(data, headers, cfg.Rules[0].OpRule)
+	modified, appliedValues := ProcessRequest(data, headers, cfg.Rules[0].OpRule, 0)
 
 	if !modified {
 		t.Error("Expected template to be applied")

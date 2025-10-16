@@ -31,25 +31,6 @@ type OperationExec struct {
 	Stop         bool
 }
 
-// matchesPatterns checks if string values match pattern field conditions
-func matchesPatterns(values map[string]string, patterns map[string]PatternField) bool {
-	if len(patterns) == 0 {
-		return true
-	}
-
-	for key, pattern := range patterns {
-		actualValue, exists := values[key]
-		if !exists {
-			return false
-		}
-
-		if !pattern.Matches(actualValue) {
-			return false
-		}
-	}
-	return true
-}
-
 // toStringMap converts map[string]any to map[string]string for pattern matching
 func toStringMap(data map[string]any) map[string]string {
 	result := make(map[string]string, len(data))
@@ -60,7 +41,7 @@ func toStringMap(data map[string]any) map[string]string {
 }
 
 // ProcessRequest applies all request operations to data
-func ProcessRequest(data map[string]any, headers map[string]string, rule *CompiledRule) (bool, map[string]any) {
+func ProcessRequest(data map[string]any, headers map[string]string, rule *CompiledRule, ruleIndex int) (bool, map[string]any) {
 	return processOperations(data, headers, rule.OnRequest, rule.OnRequestTemplates)
 }
 
@@ -78,45 +59,129 @@ func processOperations(data map[string]any, headers map[string]string, operation
 	bodyStrings := toStringMap(data)
 
 	for i, op := range operations {
-		logDebug("  Evaluating operation %d: match_body=%v, match_headers=%v",
-			i, len(op.MatchBody), len(op.MatchHeaders))
+		logDebug("  Operation %d:", i)
 
-		// Check both body and header matching using the same function
-		if !matchesPatterns(bodyStrings, op.MatchBody) || !matchesPatterns(headers, op.MatchHeaders) {
-			logDebug("    Operation %d: skipped (match conditions not met)", i)
+		// Show match conditions
+		hasConditions := len(op.MatchBody) > 0 || len(op.MatchHeaders) > 0
+		if hasConditions {
+			logDebug("    Conditions:")
+		}
+
+		// Check body matching
+		bodyMatch := true
+		if len(op.MatchBody) > 0 {
+			for key, pattern := range op.MatchBody {
+				actualValue, exists := bodyStrings[key]
+				if !exists {
+					logDebug("      ✗ %s (key not found)", key)
+					bodyMatch = false
+					break
+				}
+				if !pattern.Matches(actualValue) {
+					logDebug("      ✗ %s=\"%s\" does not match %v", key, actualValue, pattern.Patterns)
+					bodyMatch = false
+					break
+				}
+				logDebug("      ✓ %s=\"%s\" matches %v", key, actualValue, pattern.Patterns)
+			}
+		}
+
+		if !bodyMatch {
+			logDebug("    Status: SKIPPED")
+			logDebug("")
 			continue
 		}
 
-		logDebug("    Operation %d: matched, applying transformations...", i)
+		// Check headers matching
+		headersMatch := true
+		if len(op.MatchHeaders) > 0 {
+			for key, pattern := range op.MatchHeaders {
+				actualValue, exists := headers[key]
+				if !exists {
+					logDebug("      ✗ %s (header not found)", key)
+					headersMatch = false
+					break
+				}
+				if !pattern.Matches(actualValue) {
+					logDebug("      ✗ %s=\"%s\" does not match %v", key, actualValue, pattern.Patterns)
+					headersMatch = false
+					break
+				}
+				logDebug("      ✓ %s=\"%s\" (header)", key, actualValue)
+			}
+		}
+
+		if !headersMatch {
+			logDebug("    Status: SKIPPED")
+			logDebug("")
+			continue
+		}
+
+		if hasConditions {
+			logDebug("")
+		}
+
+		// Capture values before for diff
+		beforeValues := make(map[string]any)
+		for k, v := range data {
+			beforeValues[k] = v
+		}
+
+		// Track changes for this specific operation
+		opChanges := make(map[string]any)
 
 		// Execute template if present
 		if op.Template != "" && templates[i] != nil {
-			logDebug("      Executing template for operation %d", i)
 			if ExecuteTemplate(templates[i], data, data) {
-				// Track what the template produced
 				maps.Copy(appliedValues, data)
+				maps.Copy(opChanges, data)
 				anyApplied = true
 			}
 		}
 
 		// Apply other operations
-		beforeLen := len(appliedValues)
 		if len(op.Default) > 0 {
-			applyDefault(data, op.Default, appliedValues)
+			applyDefault(data, op.Default, opChanges)
+			for k, v := range opChanges {
+				appliedValues[k] = v
+			}
 		}
 		if len(op.Merge) > 0 {
-			applyMerge(data, op.Merge, appliedValues)
+			applyMerge(data, op.Merge, opChanges)
+			for k, v := range opChanges {
+				appliedValues[k] = v
+			}
 		}
 		if len(op.Delete) > 0 {
-			applyDelete(data, op.Delete, appliedValues)
+			applyDelete(data, op.Delete, opChanges)
+			for k, v := range opChanges {
+				appliedValues[k] = v
+			}
 		}
-		// Only mark as applied if something actually changed
-		if len(appliedValues) > beforeLen {
+
+		// Show changes if any
+		if len(opChanges) > 0 {
 			anyApplied = true
+
+			logDebug("    Changes:")
+			for key, newValue := range opChanges {
+				if newValue == "<deleted>" {
+					logDebug("      - %s", key)
+				} else if oldValue, existed := beforeValues[key]; existed {
+					logDebug("      ~ %s: %v -> %v", key, oldValue, newValue)
+				} else {
+					logDebug("      + %s: %v", key, newValue)
+				}
+			}
+			logDebug("")
+		} else if len(op.Default) > 0 || len(op.Merge) > 0 || len(op.Delete) > 0 {
+			logDebug("    No changes (all conditions already met)")
+			logDebug("")
 		}
 
 		if op.Stop {
-			logDebug("    Operation %d: stop flag encountered, halting processing", i)
+			logDebug("    Stop flag set - halting operation processing")
+			logDebug("")
 			break
 		}
 	}
@@ -124,7 +189,6 @@ func processOperations(data map[string]any, headers map[string]string, operation
 }
 
 func applyMerge(data map[string]any, mergeValues map[string]any, appliedValues map[string]any) {
-	logDebug("      Merging %d values", len(mergeValues))
 	for key, value := range mergeValues {
 		data[key] = value
 		appliedValues[key] = value
@@ -132,23 +196,19 @@ func applyMerge(data map[string]any, mergeValues map[string]any, appliedValues m
 }
 
 func applyDefault(data map[string]any, defaultValues map[string]any, appliedValues map[string]any) {
-	logDebug("      Applying %d default values", len(defaultValues))
 	for key, value := range defaultValues {
 		if _, exists := data[key]; !exists {
 			data[key] = value
 			appliedValues[key] = value
-			logDebug("        Set default: %s", key)
 		}
 	}
 }
 
 func applyDelete(data map[string]any, deleteKeys []string, appliedValues map[string]any) {
-	logDebug("      Deleting %d keys", len(deleteKeys))
 	for _, key := range deleteKeys {
 		if _, exists := data[key]; exists {
 			delete(data, key)
 			appliedValues[key] = "<deleted>"
-			logDebug("        Deleted: %s", key)
 		}
 	}
 }
@@ -372,19 +432,11 @@ func checkKind(kind string, value any) bool {
 
 // ExecuteTemplate applies a template to input data and updates output
 func ExecuteTemplate(tmpl *template.Template, input map[string]any, output map[string]any) bool {
-	inputKeys := make([]string, 0, len(input))
-	for k := range input {
-		inputKeys = append(inputKeys, k)
-	}
-	logDebug("        Template input keys: %v", inputKeys)
-
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, input); err != nil {
 		log.Printf("Template execution error: %v", err)
 		return false
 	}
-
-	logDebug("        Template output length: %d bytes", buf.Len())
 
 	// Parse the template output as JSON
 	var result map[string]any

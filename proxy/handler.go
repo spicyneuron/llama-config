@@ -76,10 +76,28 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 		}
 	}
 
-	if debugMode && len(body) > 0 {
-		var prettyJSON bytes.Buffer
-		json.Indent(&prettyJSON, body, "", "  ")
-		logDebug("Inbound request body:\n%s", prettyJSON.String())
+	if debugMode {
+		logDebug("========================================")
+		logDebug("Inbound Request: %s %s", req.Method, req.URL.Path)
+		logDebug("========================================")
+
+		// Log headers
+		logDebug("Headers:")
+		for key, values := range req.Header {
+			for _, value := range values {
+				logDebug("  %s: %s", key, value)
+			}
+		}
+
+		// Log body if present
+		if len(body) > 0 {
+			var prettyJSON bytes.Buffer
+			json.Indent(&prettyJSON, body, "  ", "  ")
+			logDebug("")
+			logDebug("Body:")
+			logDebug("%s", prettyJSON.String())
+		}
+		logDebug("")
 	}
 
 	// Parse JSON body if present
@@ -103,8 +121,6 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 		}
 	}
 
-	logDebug("Evaluating %d rules sequentially for %s %s", len(cfg.Rules), req.Method, req.URL.Path)
-
 	// Track the last matched rule for response processing
 	var lastMatchedRule *config.Rule
 	anyModified := false
@@ -119,15 +135,30 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 		methodMatch := rule.Methods.Matches(req.Method)
 		pathMatch := rule.Paths.Matches(req.URL.Path)
 
-		logDebug("  Rule %d: methods=%v paths=%v (method_match=%v, path_match=%v)",
-			i, rule.Methods.Patterns, rule.Paths.Patterns, methodMatch, pathMatch)
+		if debugMode {
+			logDebug("Rule %d Evaluation", i)
+			logDebug("----------------------------------------")
+			if methodMatch {
+				logDebug("  Method: %s ✓ matches %v", req.Method, rule.Methods.Patterns)
+			} else {
+				logDebug("  Method: %s ✗ does not match %v", req.Method, rule.Methods.Patterns)
+			}
+			if pathMatch {
+				logDebug("  Path: %s ✓ matches %v", req.URL.Path, rule.Paths.Patterns)
+			} else {
+				logDebug("  Path: %s ✗ does not match %v", req.URL.Path, rule.Paths.Patterns)
+			}
+			logDebug("")
+		}
 
 		if !methodMatch || !pathMatch {
-			logDebug("  Rule %d: skipped (no match)", i)
+			if debugMode {
+				logDebug("  Rule %d: SKIPPED", i)
+				logDebug("")
+			}
 			continue
 		}
 
-		logDebug("  ✓ Rule %d matched!", i)
 		matchedCount++
 		lastMatchedRule = rule
 
@@ -135,23 +166,31 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 		if rule.TargetPath != "" {
 			originalPath := req.URL.Path
 			req.URL.Path = rule.TargetPath
-			logDebug("  Rule %d: rewrote path from %s to %s", i, originalPath, rule.TargetPath)
+			if debugMode {
+				logDebug("  Path rewrite: %s -> %s", originalPath, rule.TargetPath)
+				logDebug("")
+			}
 		}
 
 		// Skip body processing if no JSON body or no operations
 		if !hasJSONBody {
-			logDebug("  Rule %d: skipping body processing (no JSON body)", i)
+			if debugMode {
+				logDebug("  No JSON body to process")
+				logDebug("")
+			}
 			continue
 		}
 
 		if len(rule.OnRequest) == 0 {
-			logDebug("  Rule %d: no on_request operations", i)
+			if debugMode {
+				logDebug("  No on_request operations")
+				logDebug("")
+			}
 			continue
 		}
 
 		// Apply operations to the current (possibly modified) data
-		logDebug("  Rule %d: applying %d on_request operation(s)", i, len(rule.OnRequest))
-		modified, appliedValues := config.ProcessRequest(data, headers, rule.OpRule)
+		modified, appliedValues := config.ProcessRequest(data, headers, rule.OpRule, i)
 
 		if modified {
 			anyModified = true
@@ -159,14 +198,21 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 			for k, v := range appliedValues {
 				allAppliedValues[k] = v
 			}
-			logDebug("  Rule %d: modified request", i)
+		}
+
+		if debugMode {
+			if modified {
+				logDebug("  Rule %d: applied %d change(s)", i, len(appliedValues))
+			} else {
+				logDebug("  Rule %d: no changes applied", i)
+			}
+			logDebug("")
 		}
 	}
 
-	if matchedCount == 0 {
-		logDebug("No rules matched for %s %s", req.Method, req.URL.Path)
-	} else {
-		logDebug("Total matched rules: %d", matchedCount)
+	if debugMode && matchedCount == 0 {
+		logDebug("No rules matched")
+		logDebug("")
 	}
 
 	// Store the last matching rule in context for response processing
@@ -187,9 +233,33 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 		req.Body = io.NopCloser(bytes.NewReader(modifiedBody))
 		req.ContentLength = int64(len(modifiedBody))
 
-		if anyModified {
-			appliedJSON, _ := json.MarshalIndent(allAppliedValues, "", "  ")
-			logDebug("Total applied request changes:\n%s", string(appliedJSON))
+		if anyModified && debugMode {
+			logDebug("========================================")
+			logDebug("Final Result")
+			logDebug("========================================")
+			logDebug("Changes applied:")
+
+			// Show changes in diff format
+			for key, value := range allAppliedValues {
+				if value == "<deleted>" {
+					logDebug("  - %s", key)
+				} else {
+					// Check if it was a modification or addition
+					var originalData map[string]any
+					json.Unmarshal(body, &originalData)
+					if _, existed := originalData[key]; existed {
+						logDebug("  ~ %s: -> %v", key, value)
+					} else {
+						logDebug("  + %s: %v", key, value)
+					}
+				}
+			}
+
+			logDebug("")
+			logDebug("Outbound body:")
+			finalBody, _ := json.MarshalIndent(data, "  ", "  ")
+			logDebug("%s", string(finalBody))
+			logDebug("")
 		}
 	} else if len(body) > 0 {
 		// Restore original non-JSON body
@@ -235,10 +305,28 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 		return fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	if debugMode && len(body) > 0 {
-		var prettyJSON bytes.Buffer
-		json.Indent(&prettyJSON, body, "", "  ")
-		logDebug("Inbound response body:\n%s", prettyJSON.String())
+	if debugMode {
+		logDebug("========================================")
+		logDebug("Inbound Response: %d %s", resp.StatusCode, resp.Status)
+		logDebug("========================================")
+
+		// Log headers
+		logDebug("Headers:")
+		for key, values := range resp.Header {
+			for _, value := range values {
+				logDebug("  %s: %s", key, value)
+			}
+		}
+
+		// Log body if present
+		if len(body) > 0 {
+			var prettyJSON bytes.Buffer
+			json.Indent(&prettyJSON, body, "  ", "  ")
+			logDebug("")
+			logDebug("Body:")
+			logDebug("%s", prettyJSON.String())
+		}
+		logDebug("")
 	}
 
 	var data map[string]any
@@ -256,6 +344,12 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 		}
 	}
 
+	if debugMode {
+		logDebug("Processing response operations")
+		logDebug("----------------------------------------")
+		logDebug("")
+	}
+
 	modified, appliedValues := config.ProcessResponse(data, headers, matchingRule.OpRule)
 
 	modifiedBody, err := json.Marshal(data)
@@ -267,9 +361,31 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 	resp.Body = io.NopCloser(bytes.NewReader(modifiedBody))
 	resp.ContentLength = int64(len(modifiedBody))
 
-	if modified {
-		appliedJSON, _ := json.MarshalIndent(appliedValues, "", "  ")
-		logDebug("Applied response changes:\n%s", string(appliedJSON))
+	if modified && debugMode {
+		logDebug("========================================")
+		logDebug("Final Result")
+		logDebug("========================================")
+		logDebug("Changes applied:")
+
+		// Show changes in diff format
+		var originalData map[string]any
+		json.Unmarshal(body, &originalData)
+
+		for key, value := range appliedValues {
+			if value == "<deleted>" {
+				logDebug("  - %s", key)
+			} else if _, existed := originalData[key]; existed {
+				logDebug("  ~ %s: -> %v", key, value)
+			} else {
+				logDebug("  + %s: %v", key, value)
+			}
+		}
+
+		logDebug("")
+		logDebug("Outbound body:")
+		finalBody, _ := json.MarshalIndent(data, "  ", "  ")
+		logDebug("%s", string(finalBody))
+		logDebug("")
 	}
 
 	return nil
