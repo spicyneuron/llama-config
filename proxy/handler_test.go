@@ -552,3 +552,105 @@ func TestModifyRequestStackingWithConditionalMatch(t *testing.T) {
 		t.Errorf("Expected completion_config.enabled to be true, got %v", completionConfig["enabled"])
 	}
 }
+
+// TestLazySequentialMatching verifies that rules are checked and processed one at a time,
+// allowing rule 1's modifications to affect rule 2's operation matching
+func TestLazySequentialMatching(t *testing.T) {
+	cfg := &config.Config{
+		Proxy: config.ProxyConfig{
+			Listen: "localhost:8080",
+			Target: "http://localhost:9000",
+		},
+		Rules: []config.Rule{
+			// Rule 1: Transform "alias" field to "model" field
+			{
+				Methods: newPatternField("POST"),
+				Paths:   newPatternField("/api/.*"),
+				OnRequest: []config.Operation{
+					{
+						MatchBody: map[string]config.PatternField{
+							"alias": {
+								Patterns: []string{".*"},
+							},
+						},
+						Template: `{
+							"model": {{ toJson .alias }},
+							"prompt": {{ toJson .prompt }}
+						}`,
+					},
+				},
+			},
+			// Rule 2: Add config only if model field exists (set by rule 1)
+			{
+				Methods: newPatternField("POST"),
+				Paths:   newPatternField("/api/.*"),
+				OnRequest: []config.Operation{
+					{
+						MatchBody: map[string]config.PatternField{
+							"model": {
+								Patterns: []string{"gpt-.*"},
+							},
+						},
+						Merge: map[string]any{
+							"temperature": 0.7,
+							"provider":    "openai",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Validate and compile the config
+	if err := config.Validate(cfg); err != nil {
+		t.Fatalf("Config validation failed: %v", err)
+	}
+
+	// Compile templates
+	if err := config.CompileTemplates(cfg); err != nil {
+		t.Fatalf("Template compilation failed: %v", err)
+	}
+
+	// Create request with "alias" field (no "model" field yet)
+	reqData := map[string]any{
+		"alias":  "gpt-4",
+		"prompt": "Hello",
+	}
+	reqBody, _ := json.Marshal(reqData)
+	req := httptest.NewRequest("POST", "/api/chat", bytes.NewReader(reqBody))
+
+	// Apply modifications
+	ModifyRequest(req, cfg)
+
+	// Read and verify modified body
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatalf("Failed to read modified body: %v", err)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(body, &result); err != nil {
+		t.Fatalf("Failed to unmarshal modified body: %v", err)
+	}
+
+	// Verify rule 1 transformed alias to model
+	if modelVal, ok := result["model"].(string); !ok || modelVal != "gpt-4" {
+		t.Errorf("Expected model to be 'gpt-4', got %v", result["model"])
+	}
+
+	// Verify alias field was removed by template (template only includes model and prompt)
+	if _, exists := result["alias"]; exists {
+		t.Errorf("Expected alias field to be removed by template")
+	}
+
+	// CRITICAL: Verify rule 2 added config (because rule 1 set model=gpt-4)
+	// This only works with lazy sequential matching - if rules were pre-matched,
+	// rule 2's operation wouldn't see the model field that rule 1 created
+	if temp, ok := result["temperature"].(float64); !ok || temp != 0.7 {
+		t.Errorf("Expected temperature to be 0.7 (set by rule 2), got %v", result["temperature"])
+	}
+
+	if provider, ok := result["provider"].(string); !ok || provider != "openai" {
+		t.Errorf("Expected provider to be 'openai' (set by rule 2), got %v", result["provider"])
+	}
+}

@@ -60,7 +60,8 @@ func FindMatchingRules(req *http.Request, cfg *config.Config) []*config.Rule {
 	return matchedRules
 }
 
-// ModifyRequest processes the request through all matching rules sequentially
+// ModifyRequest processes the request through rules sequentially
+// Each rule is checked and processed immediately before moving to the next rule
 func ModifyRequest(req *http.Request, cfg *config.Config) {
 	// Read and limit body size to 10MB to prevent memory exhaustion
 	var body []byte
@@ -102,43 +103,54 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 		}
 	}
 
-	// Find all matching rules (based on method and path)
-	matchingRules := FindMatchingRules(req, cfg)
-
-	if len(matchingRules) == 0 {
-		logDebug("No matching rules for %s %s", req.Method, req.URL.Path)
-		if len(body) > 0 {
-			req.Body = io.NopCloser(bytes.NewReader(body))
-		}
-		return
-	}
-
-	logDebug("Processing request with %d matching rule(s)", len(matchingRules))
+	logDebug("Evaluating %d rules sequentially for %s %s", len(cfg.Rules), req.Method, req.URL.Path)
 
 	// Track the last matched rule for response processing
 	var lastMatchedRule *config.Rule
 	anyModified := false
 	allAppliedValues := make(map[string]any)
+	matchedCount := 0
 
-	// Apply each matching rule sequentially
-	for ruleIdx, rule := range matchingRules {
+	// Process rules sequentially: check and apply each rule before moving to next
+	for i := range cfg.Rules {
+		rule := &cfg.Rules[i]
+
+		// Check if this rule matches (method and path)
+		methodMatch := rule.Methods.Matches(req.Method)
+		pathMatch := rule.Paths.Matches(req.URL.Path)
+
+		logDebug("  Rule %d: methods=%v paths=%v (method_match=%v, path_match=%v)",
+			i, rule.Methods.Patterns, rule.Paths.Patterns, methodMatch, pathMatch)
+
+		if !methodMatch || !pathMatch {
+			logDebug("  Rule %d: skipped (no match)", i)
+			continue
+		}
+
+		logDebug("  ✓ Rule %d matched!", i)
+		matchedCount++
 		lastMatchedRule = rule
-		logDebug("Applying rule %d/%d (on_request ops: %d)", ruleIdx+1, len(matchingRules), len(rule.OnRequest))
 
 		// Handle target path rewriting
 		if rule.TargetPath != "" {
 			originalPath := req.URL.Path
 			req.URL.Path = rule.TargetPath
-			logDebug("Rewrote request path from %s to %s", originalPath, rule.TargetPath)
+			logDebug("  Rule %d: rewrote path from %s to %s", i, originalPath, rule.TargetPath)
 		}
 
-		// Skip body processing if no JSON body
+		// Skip body processing if no JSON body or no operations
 		if !hasJSONBody {
-			logDebug("Skipping rule %d body processing (no JSON body)", ruleIdx+1)
+			logDebug("  Rule %d: skipping body processing (no JSON body)", i)
+			continue
+		}
+
+		if len(rule.OnRequest) == 0 {
+			logDebug("  Rule %d: no on_request operations", i)
 			continue
 		}
 
 		// Apply operations to the current (possibly modified) data
+		logDebug("  Rule %d: applying %d on_request operation(s)", i, len(rule.OnRequest))
 		modified, appliedValues := config.ProcessRequest(data, headers, rule.OpRule)
 
 		if modified {
@@ -147,8 +159,14 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 			for k, v := range appliedValues {
 				allAppliedValues[k] = v
 			}
-			logDebug("Rule %d/%d modified request", ruleIdx+1, len(matchingRules))
+			logDebug("  Rule %d: modified request", i)
 		}
+	}
+
+	if matchedCount == 0 {
+		logDebug("No rules matched for %s %s", req.Method, req.URL.Path)
+	} else {
+		logDebug("Total matched rules: %d", matchedCount)
 	}
 
 	// Store the last matching rule in context for response processing
