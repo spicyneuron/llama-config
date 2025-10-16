@@ -1,20 +1,8 @@
-# Complete Ollama ↔ OpenAI Transformation
-#
-# This config enables full bidirectional transformation between Ollama and OpenAI formats:
-# 1. Ollama chat requests → OpenAI format
-# 2. OpenAI chat responses → Ollama format
-# 3. Ollama model list requests → OpenAI format
-# 4. OpenAI model list responses → Ollama format
-#
-# Usage:
-#   llama-config-proxy -config examples/ollama.yml -target http://localhost:8080
-
 proxy:
-  listen: "localhost:11434"  # Standard Ollama port
-  target: "http://localhost:8080"  # Your OpenAI-compatible backend
+  listen: "localhost:11434"
+  target: "http://localhost:8080"
 
 rules:
-  # Chat completions: Ollama → OpenAI
   - methods: POST
     paths: ^/api/chat$
     target_path: /v1/chat/completions
