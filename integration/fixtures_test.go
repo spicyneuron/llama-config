@@ -1,4 +1,4 @@
-package testdata
+package integration
 
 import (
 	"encoding/json"
@@ -9,7 +9,7 @@ import (
 
 // TestFixturesValidJSON verifies all JSON fixtures are valid
 func TestFixturesValidJSON(t *testing.T) {
-	fixturesDir := "fixtures"
+	fixturesDir := filepath.Join("testdata", "fixtures")
 
 	entries, err := os.ReadDir(fixturesDir)
 	if err != nil {
@@ -67,9 +67,10 @@ func TestOllamaChatFixtures(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			data, err := os.ReadFile(tt.file)
+			path := filepath.Join("testdata", tt.file)
+			data, err := os.ReadFile(path)
 			if err != nil {
-				t.Fatalf("Failed to read fixture: %v", err)
+				t.Fatalf("Failed to read fixture %s: %v", path, err)
 			}
 
 			var result map[string]any
@@ -136,9 +137,10 @@ func TestOpenAIChatFixtures(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			data, err := os.ReadFile(tt.file)
+			path := filepath.Join("testdata", tt.file)
+			data, err := os.ReadFile(path)
 			if err != nil {
-				t.Fatalf("Failed to read fixture: %v", err)
+				t.Fatalf("Failed to read fixture %s: %v", path, err)
 			}
 
 			var result map[string]any
@@ -185,9 +187,10 @@ func TestOpenAIChatFixtures(t *testing.T) {
 // TestModelListFixtures validates model list response structures
 func TestModelListFixtures(t *testing.T) {
 	t.Run("ollama tags", func(t *testing.T) {
-		data, err := os.ReadFile("fixtures/ollama-tags-response.json")
+		path := filepath.Join("testdata", "fixtures", "ollama-tags-response.json")
+		data, err := os.ReadFile(path)
 		if err != nil {
-			t.Fatalf("Failed to read fixture: %v", err)
+			t.Fatalf("Failed to read fixture %s: %v", path, err)
 		}
 
 		var result map[string]any
@@ -213,9 +216,10 @@ func TestModelListFixtures(t *testing.T) {
 	})
 
 	t.Run("openai models", func(t *testing.T) {
-		data, err := os.ReadFile("fixtures/openai-models-response.json")
+		path := filepath.Join("testdata", "fixtures", "openai-models-response.json")
+		data, err := os.ReadFile(path)
 		if err != nil {
-			t.Fatalf("Failed to read fixture: %v", err)
+			t.Fatalf("Failed to read fixture %s: %v", path, err)
 		}
 
 		var result map[string]any

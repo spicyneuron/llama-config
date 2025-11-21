@@ -1,4 +1,4 @@
-package proxy
+package integration
 
 import (
 	"bytes"
@@ -8,61 +8,45 @@ import (
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
-	"regexp"
 	"testing"
 
 	"github.com/spicyneuron/llama-config-proxy/config"
+	"github.com/spicyneuron/llama-config-proxy/proxy"
 )
-
-// Test helper
-func newPatternField(patterns ...string) config.PatternField {
-	const regexFlags = "(?i)"
-	pf := config.PatternField{
-		Patterns: patterns,
-		Compiled: make([]*regexp.Regexp, len(patterns)),
-	}
-	for i, pattern := range patterns {
-		pf.Compiled[i] = regexp.MustCompile(regexFlags + pattern)
-	}
-	return pf
-}
 
 func TestEndToEndRequestModification(t *testing.T) {
 	// Create a mock backend that echoes the request back
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	backend, closeBackend := newSafeTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(body)
-	}))
-	defer backend.Close()
+	})
+	if backend == nil {
+		return
+	}
+	defer closeBackend()
 
 	// Create config with a simple rule
-	cfg := &config.Config{
-		Proxy: config.ProxyConfig{
-			Listen: "localhost:8081",
-			Target: backend.URL,
-		},
-		Rules: []config.Rule{
-			{
-				Methods: newPatternField("POST"),
-				Paths:   newPatternField("/v1/chat/completions"),
-				OnRequest: []config.Operation{
-					{
-						// Add default max_tokens
-						Default: map[string]any{
-							"max_tokens": 1000,
-						},
+	cfg := newTestConfig(backend.URL, []config.Rule{
+		{
+			Methods: newPatternField("POST"),
+			Paths:   newPatternField("/v1/chat/completions"),
+			OnRequest: []config.Operation{
+				{
+					// Add default max_tokens
+					Default: map[string]any{
+						"max_tokens": 1000,
 					},
-					{
-						// Override temperature
-						Merge: map[string]any{
-							"temperature": 0.7,
-						},
+				},
+				{
+					// Override temperature
+					Merge: map[string]any{
+						"temperature": 0.7,
 					},
 				},
 			},
 		},
-	}
+	})
 
 	// Validate and compile the config
 	if err := config.Validate(cfg); err != nil {
@@ -81,15 +65,15 @@ func TestEndToEndRequestModification(t *testing.T) {
 	}
 
 	// Create reverse proxy
-	proxy := httputil.NewSingleHostReverseProxy(targetURL)
-	originalDirector := proxy.Director
-	proxy.Director = func(req *http.Request) {
+	rp := httputil.NewSingleHostReverseProxy(targetURL)
+	originalDirector := rp.Director
+	rp.Director = func(req *http.Request) {
 		originalDirector(req)
-		ModifyRequest(req, cfg)
+		proxy.ModifyRequest(req, cfg)
 	}
 
 	// Create test server with the proxy
-	proxyServer := httptest.NewServer(proxy)
+	proxyServer := httptest.NewServer(rp)
 	defer proxyServer.Close()
 
 	// Create test request (without temperature or max_tokens)
@@ -159,10 +143,10 @@ func TestEndToEndResponseModification(t *testing.T) {
 
 	// Create config with response modification
 	cfg := &config.Config{
-		Proxy: config.ProxyConfig{
+		Proxies: []config.ProxyConfig{{
 			Listen: "localhost:8081",
 			Target: backend.URL,
-		},
+		}},
 		Rules: []config.Rule{
 			{
 				Methods: newPatternField("POST"),
@@ -191,19 +175,19 @@ func TestEndToEndResponseModification(t *testing.T) {
 	}
 
 	targetURL, _ := url.Parse(backend.URL)
-	proxy := httputil.NewSingleHostReverseProxy(targetURL)
+	rp := httputil.NewSingleHostReverseProxy(targetURL)
 
-	originalDirector := proxy.Director
-	proxy.Director = func(req *http.Request) {
+	originalDirector := rp.Director
+	rp.Director = func(req *http.Request) {
 		originalDirector(req)
-		ModifyRequest(req, cfg)
+		proxy.ModifyRequest(req, cfg)
 	}
 
-	proxy.ModifyResponse = func(resp *http.Response) error {
-		return ModifyResponse(resp, cfg)
+	rp.ModifyResponse = func(resp *http.Response) error {
+		return proxy.ModifyResponse(resp, cfg)
 	}
 
-	proxyServer := httptest.NewServer(proxy)
+	proxyServer := httptest.NewServer(rp)
 	defer proxyServer.Close()
 
 	// Make request
@@ -252,24 +236,21 @@ func TestEndToEndResponseModification(t *testing.T) {
 
 func TestBodySizeLimit(t *testing.T) {
 	// Create a mock backend
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	backend, closeBackend := newSafeTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-	}))
-	defer backend.Close()
-
-	cfg := &config.Config{
-		Proxy: config.ProxyConfig{
-			Listen: "localhost:8081",
-			Target: backend.URL,
-		},
-		Rules: []config.Rule{
-			{
-				Methods:   newPatternField("POST"),
-				Paths:     newPatternField("/test"),
-				OnRequest: []config.Operation{{Merge: map[string]any{"field": "value"}}},
-			},
-		},
+	})
+	if backend == nil {
+		return
 	}
+	defer closeBackend()
+
+	cfg := newTestConfig(backend.URL, []config.Rule{
+		{
+			Methods:   newPatternField("POST"),
+			Paths:     newPatternField("/test"),
+			OnRequest: []config.Operation{{Merge: map[string]any{"field": "value"}}},
+		},
+	})
 
 	if err := config.Validate(cfg); err != nil {
 		t.Fatalf("Config validation failed: %v", err)
@@ -290,7 +271,7 @@ func TestBodySizeLimit(t *testing.T) {
 
 	// The body will be read but truncated at 10MB
 	// This test just ensures we don't panic or run out of memory
-	ModifyRequest(req, cfg)
+	proxy.ModifyRequest(req, cfg)
 
 	// If we get here without panic, the size limit is working
 	t.Log("Body size limit test passed (no panic on large body)")

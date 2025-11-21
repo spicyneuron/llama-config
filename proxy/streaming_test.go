@@ -7,8 +7,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/spicyneuron/llama-config-proxy/config"
 )
@@ -23,10 +26,7 @@ func mustParseURL(rawURL string) *url.URL {
 
 func TestModifyStreamingResponse_OpenAIFormat(t *testing.T) {
 	// Load config with streaming transformation
-	cfg, err := config.Load([]string{"../examples/ollama.yml"}, config.CliOverrides{})
-	if err != nil {
-		t.Fatalf("Failed to load config: %v", err)
-	}
+	cfg := mustLoadRulesOnly(t, "../examples/rules-ollama.yml")
 
 	// Create mock streaming response (OpenAI SSE format)
 	sseData := `data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4o-mini","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
@@ -59,8 +59,7 @@ data: [DONE]
 	rule := rules[0]
 
 	// Apply streaming transformation
-	err = ModifyStreamingResponse(resp, rule)
-	if err != nil {
+	if err := ModifyStreamingResponse(resp, rule); err != nil {
 		t.Fatalf("ModifyStreamingResponse failed: %v", err)
 	}
 
@@ -104,13 +103,44 @@ data: [DONE]
 	}
 }
 
+func mustLoadRulesOnly(t *testing.T, path string) *config.Config {
+	t.Helper()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("Failed to read %s: %v", path, err)
+	}
+
+	var rules []config.Rule
+	if err := yaml.Unmarshal(data, &rules); err != nil {
+		t.Fatalf("Failed to parse rules in %s: %v", path, err)
+	}
+
+	cfg := &config.Config{
+		Proxies: []config.ProxyConfig{{
+			Listen: "localhost:0",
+			Target: "http://localhost:0",
+		}},
+		Rules: rules,
+	}
+
+	if err := config.Validate(cfg); err != nil {
+		t.Fatalf("Failed to validate rules from %s: %v", path, err)
+	}
+	if err := config.CompileTemplates(cfg); err != nil {
+		t.Fatalf("Failed to compile templates from %s: %v", path, err)
+	}
+
+	return cfg
+}
+
 func TestModifyStreamingResponse_OllamaFormat(t *testing.T) {
 	// Create a simple config with transformation
 	cfg := &config.Config{
-		Proxy: config.ProxyConfig{
+		Proxies: []config.ProxyConfig{{
 			Listen: "localhost:8080",
 			Target: "http://localhost:9000",
-		},
+		}},
 		Rules: []config.Rule{
 			{
 				Methods:    config.PatternField{Patterns: []string{"POST"}},
@@ -191,10 +221,10 @@ func TestModifyStreamingResponse_OllamaFormat(t *testing.T) {
 
 func TestModifyStreamingResponse_PassthroughNonJSON(t *testing.T) {
 	cfg := &config.Config{
-		Proxy: config.ProxyConfig{
+		Proxies: []config.ProxyConfig{{
 			Listen: "localhost:8080",
 			Target: "http://localhost:9000",
-		},
+		}},
 		Rules: []config.Rule{
 			{
 				Methods: config.PatternField{Patterns: []string{"GET"}},
@@ -262,10 +292,10 @@ data: keep-alive
 
 func TestModifyResponse_RoutesToStreaming(t *testing.T) {
 	cfg := &config.Config{
-		Proxy: config.ProxyConfig{
+		Proxies: []config.ProxyConfig{{
 			Listen: "localhost:8080",
 			Target: "http://localhost:9000",
-		},
+		}},
 		Rules: []config.Rule{
 			{
 				Methods: config.PatternField{Patterns: []string{"POST"}},

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,52 +10,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
-
-// Test helper functions
-
-// newPatternField creates a PatternField for testing
-func newPatternField(patterns ...string) PatternField {
-	pf := PatternField{Patterns: patterns}
-	pf.Validate() // Pre-compile regexes
-	return pf
-}
-
-// parseConfig parses a YAML config string directly without file I/O
-func parseConfig(t *testing.T, yamlContent string) (*Config, error) {
-	t.Helper()
-
-	var cfg Config
-	if err := yaml.Unmarshal([]byte(yamlContent), &cfg); err != nil {
-		return nil, err
-	}
-
-	// Apply defaults
-	if cfg.Proxy.Timeout == 0 {
-		cfg.Proxy.Timeout = 60 * time.Second
-	}
-
-	// Validate
-	if err := Validate(&cfg); err != nil {
-		return nil, err
-	}
-
-	// Compile templates
-	if err := CompileTemplates(&cfg); err != nil {
-		return nil, err
-	}
-
-	return &cfg, nil
-}
-
-// mustParseConfig parses config and fails test on error
-func mustParseConfig(t *testing.T, yamlContent string) *Config {
-	t.Helper()
-	cfg, err := parseConfig(t, yamlContent)
-	if err != nil {
-		t.Fatalf("Failed to parse config: %v", err)
-	}
-	return cfg
-}
 
 func TestLoad(t *testing.T) {
 	// Create a temporary config file for testing
@@ -84,14 +39,14 @@ rules:
 	}
 
 	// Verify basic fields
-	if cfg.Proxy.Listen != "localhost:8081" {
-		t.Errorf("Listen = %v, want localhost:8081", cfg.Proxy.Listen)
+	if cfg.Proxies[0].Listen != "localhost:8081" {
+		t.Errorf("Listen = %v, want localhost:8081", cfg.Proxies[0].Listen)
 	}
-	if cfg.Proxy.Target != "http://localhost:8080" {
-		t.Errorf("Target = %v, want http://localhost:8080", cfg.Proxy.Target)
+	if cfg.Proxies[0].Target != "http://localhost:8080" {
+		t.Errorf("Target = %v, want http://localhost:8080", cfg.Proxies[0].Target)
 	}
-	if cfg.Proxy.Timeout != 30*time.Second {
-		t.Errorf("Timeout = %v, want 30s", cfg.Proxy.Timeout)
+	if cfg.Proxies[0].Timeout != 30*time.Second {
+		t.Errorf("Timeout = %v, want 30s", cfg.Proxies[0].Timeout)
 	}
 
 	// Verify rules loaded and compiled
@@ -136,16 +91,16 @@ rules:
 	}
 
 	// Verify overrides were applied
-	if cfg.Proxy.Listen != "0.0.0.0:9000" {
-		t.Errorf("Listen = %v, want 0.0.0.0:9000", cfg.Proxy.Listen)
+	if cfg.Proxies[0].Listen != "0.0.0.0:9000" {
+		t.Errorf("Listen = %v, want 0.0.0.0:9000", cfg.Proxies[0].Listen)
 	}
-	if cfg.Proxy.Target != "http://backend:5000" {
-		t.Errorf("Target = %v, want http://backend:5000", cfg.Proxy.Target)
+	if cfg.Proxies[0].Target != "http://backend:5000" {
+		t.Errorf("Target = %v, want http://backend:5000", cfg.Proxies[0].Target)
 	}
-	if cfg.Proxy.Timeout != 60*time.Second {
-		t.Errorf("Timeout = %v, want 60s", cfg.Proxy.Timeout)
+	if cfg.Proxies[0].Timeout != 60*time.Second {
+		t.Errorf("Timeout = %v, want 60s", cfg.Proxies[0].Timeout)
 	}
-	if !cfg.Proxy.Debug {
+	if !cfg.Proxies[0].Debug {
 		t.Error("Debug should be true")
 	}
 }
@@ -166,8 +121,50 @@ rules:
 	cfg := mustParseConfig(t, configContent)
 
 	// Should default to 60 seconds
-	if cfg.Proxy.Timeout != 60*time.Second {
-		t.Errorf("Timeout = %v, want 60s (default)", cfg.Proxy.Timeout)
+	if cfg.Proxies[0].Timeout != 60*time.Second {
+		t.Errorf("Timeout = %v, want 60s (default)", cfg.Proxies[0].Timeout)
+	}
+}
+
+func TestLoadWithAdditionalProxies(t *testing.T) {
+	configContent := `
+proxy:
+  - listen: "localhost:8081"
+    target: "http://localhost:8080"
+  - listen: "localhost:8082"
+    target: "http://localhost:8083"
+
+rules:
+  - methods: POST
+    paths: /v1/chat
+    on_request:
+      - merge:
+          temperature: 0.7
+`
+	cfg := mustParseConfig(t, configContent)
+
+	if len(cfg.Proxies) != 2 {
+		t.Fatalf("len(Proxies) = %d, want 2", len(cfg.Proxies))
+	}
+
+	if cfg.Proxies[0].Listen != "localhost:8081" {
+		t.Errorf("Primary proxy listen = %v, want localhost:8081", cfg.Proxies[0].Listen)
+	}
+
+	if cfg.Proxies[0].Target != "http://localhost:8080" {
+		t.Errorf("Primary proxy target = %v, want http://localhost:8080", cfg.Proxies[0].Target)
+	}
+
+	if cfg.Proxies[1].Listen != "localhost:8082" {
+		t.Errorf("Second proxy listen = %v, want localhost:8082", cfg.Proxies[1].Listen)
+	}
+
+	if cfg.Proxies[1].Target != "http://localhost:8083" {
+		t.Errorf("Second proxy target = %v, want http://localhost:8083", cfg.Proxies[1].Target)
+	}
+
+	if cfg.Proxies[0].Timeout != 60*time.Second || cfg.Proxies[1].Timeout != 60*time.Second {
+		t.Errorf("Expected default timeout to be applied to all proxies, got %v and %v", cfg.Proxies[0].Timeout, cfg.Proxies[1].Timeout)
 	}
 }
 
@@ -210,7 +207,7 @@ rules:
 	if err == nil {
 		t.Error("parseConfig() should fail validation")
 	}
-	if !strings.Contains(err.Error(), "listen is required") {
+	if !strings.Contains(err.Error(), "proxy[0].listen is required") {
 		t.Errorf("Unexpected error message: %v", err)
 	}
 }
@@ -327,8 +324,8 @@ rules:
 func TestLoadInvalidTemplate(t *testing.T) {
 	configContent := `
 proxy:
-  listen: "localhost:8081"
-  target: "http://localhost:8080"
+  - listen: "localhost:8081"
+    target: "http://localhost:8080"
 
 rules:
   - methods: POST
@@ -430,8 +427,8 @@ rules:
 		t.Fatalf("Load() failed: %v", err)
 	}
 
-	if cfg.Proxy.Listen != "localhost:8080" {
-		t.Errorf("Listen = %v, want localhost:8080", cfg.Proxy.Listen)
+	if cfg.Proxies[0].Listen != "localhost:8080" {
+		t.Errorf("Listen = %v, want localhost:8080", cfg.Proxies[0].Listen)
 	}
 
 	if len(cfg.Rules) != 2 {
@@ -453,6 +450,7 @@ func TestLoadProxyMerge(t *testing.T) {
 	config1 := `
 proxy:
   listen: "localhost:8080"
+  target: "http://localhost:3000"
 
 rules:
   - methods: GET
@@ -468,7 +466,8 @@ rules:
 
 	config2 := `
 proxy:
-  target: "http://localhost:3000"
+  listen: "localhost:8081"
+  target: "http://localhost:3001"
   debug: true
 
 rules:
@@ -488,20 +487,16 @@ rules:
 		t.Fatalf("Load() failed: %v", err)
 	}
 
-	if cfg.Proxy.Listen != "localhost:8080" {
-		t.Errorf("Listen = %v, want localhost:8080 (from config1, not overridden)", cfg.Proxy.Listen)
+	if len(cfg.Proxies) != 2 {
+		t.Fatalf("expected two proxies, got %d", len(cfg.Proxies))
 	}
 
-	if cfg.Proxy.Target != "http://localhost:3000" {
-		t.Errorf("Target = %v, want http://localhost:3000 (from config2)", cfg.Proxy.Target)
+	if cfg.Proxies[0].Listen != "localhost:8080" || cfg.Proxies[0].Target != "http://localhost:3000" {
+		t.Errorf("first proxy = %+v, want listen localhost:8080 target http://localhost:3000", cfg.Proxies[0])
 	}
 
-	if !cfg.Proxy.Debug {
-		t.Error("Debug should be true (from config2)")
-	}
-
-	if len(cfg.Rules) != 2 {
-		t.Fatalf("len(Rules) = %d, want 2", len(cfg.Rules))
+	if cfg.Proxies[1].Listen != "localhost:8081" || cfg.Proxies[1].Target != "http://localhost:3001" || !cfg.Proxies[1].Debug {
+		t.Errorf("second proxy = %+v, want listen localhost:8081 target http://localhost:3001 debug true", cfg.Proxies[1])
 	}
 }
 
@@ -526,35 +521,60 @@ rules:
 		t.Fatalf("Failed to write base: %v", err)
 	}
 
-	override := `
-proxy:
-  listen: "localhost:9000"
-  debug: true
-`
-	overridePath := filepath.Join(tmpDir, "override.yml")
-	if err := os.WriteFile(overridePath, []byte(override), 0644); err != nil {
-		t.Fatalf("Failed to write override: %v", err)
-	}
-
-	cfg, err := Load([]string{basePath, overridePath}, CliOverrides{})
+	cfg, err := Load([]string{basePath}, CliOverrides{
+		Listen: "localhost:9000",
+		Debug:  true,
+	})
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
 	}
 
-	if cfg.Proxy.Listen != "localhost:9000" {
-		t.Errorf("Listen = %v, want localhost:9000 (overridden by later config)", cfg.Proxy.Listen)
+	if cfg.Proxies[0].Listen != "localhost:9000" {
+		t.Errorf("Listen = %v, want localhost:9000 (overridden by CLI)", cfg.Proxies[0].Listen)
 	}
 
-	if cfg.Proxy.Target != "http://localhost:3000" {
-		t.Errorf("Target = %v, want http://localhost:3000 (from base, not overridden)", cfg.Proxy.Target)
+	if cfg.Proxies[0].Target != "http://localhost:3000" {
+		t.Errorf("Target = %v, want http://localhost:3000 (from base, not overridden)", cfg.Proxies[0].Target)
 	}
 
-	if cfg.Proxy.Timeout != 30*time.Second {
-		t.Errorf("Timeout = %v, want 30s (from base, not overridden)", cfg.Proxy.Timeout)
+	if cfg.Proxies[0].Timeout != 30*time.Second {
+		t.Errorf("Timeout = %v, want 30s (from base, not overridden)", cfg.Proxies[0].Timeout)
 	}
 
-	if !cfg.Proxy.Debug {
-		t.Error("Debug should be true (from override)")
+	if !cfg.Proxies[0].Debug {
+		t.Error("Debug should be true (from CLI override)")
+	}
+}
+
+func TestLoadMultipleProxiesWithOverridesFail(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	content := `
+proxy:
+  - listen: "localhost:8080"
+    target: "http://localhost:3000"
+  - listen: "localhost:8081"
+    target: "http://localhost:3001"
+
+rules:
+  - methods: GET
+    paths: /health
+    on_request:
+      - merge:
+          source: "proxies"
+`
+	configPath := filepath.Join(tmpDir, "multi.yml")
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	_, err := Load([]string{configPath}, CliOverrides{Listen: "127.0.0.1:9999"})
+	if err == nil {
+		t.Fatal("Load() should fail when CLI overrides are used with multiple proxies")
+	}
+
+	if !strings.Contains(err.Error(), "CLI overrides for listen/target/timeout/ssl") {
+		t.Fatalf("Unexpected error: %v", err)
 	}
 }
 
@@ -610,10 +630,6 @@ rules:
 		t.Fatalf("Load() failed: %v", err)
 	}
 
-	if mergedCfg.Proxy.Listen != "localhost:9000" {
-		t.Errorf("Listen = %v, want localhost:9000", mergedCfg.Proxy.Listen)
-	}
-
 	if len(mergedCfg.Rules) != 3 {
 		t.Fatalf("len(Rules) = %d, want 3", len(mergedCfg.Rules))
 	}
@@ -623,6 +639,130 @@ rules:
 		if mergedCfg.Rules[i].Methods.Patterns[0] != expected {
 			t.Errorf("Rules[%d].Methods = %v, want %v", i, mergedCfg.Rules[i].Methods.Patterns[0], expected)
 		}
+	}
+}
+
+func TestLoadProxySpecificRulesOverrideShared(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "main.yml")
+
+	configContent := `
+proxy:
+  - listen: "localhost:8081"
+    target: "http://localhost:8080"
+  - listen: "localhost:8082"
+    target: "http://localhost:8080"
+    rules:
+      - methods: POST
+        paths: ^/special$
+        on_request:
+          - merge:
+              from: "proxy-override"
+
+rules:
+  - methods: POST
+    paths: ^/special$
+    on_request:
+      - merge:
+          from: "shared-rule"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	cfg, err := Load([]string{configPath}, CliOverrides{})
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if len(cfg.Proxies) != 2 {
+		t.Fatalf("expected 2 proxies, got %d", len(cfg.Proxies))
+	}
+
+	// First proxy should inherit shared rules
+	if got := cfg.Proxies[0].Rules; len(got) != 1 || got[0].OnRequest[0].Merge["from"] != "shared-rule" {
+		t.Fatalf("proxy[0] rules not inherited correctly: %+v", got)
+	}
+
+	// Second proxy should keep its own
+	if got := cfg.Proxies[1].Rules; len(got) != 1 || got[0].OnRequest[0].Merge["from"] != "proxy-override" {
+		t.Fatalf("proxy[1] rules not preserved: %+v", got)
+	}
+}
+
+func TestLoadIncludesAreExpanded(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	sharedRules := `
+- methods: POST
+  paths: ^/included$
+  on_request:
+    - merge:
+        marker: "included"
+`
+	sharedPath := filepath.Join(tmpDir, "shared_rules.yml")
+	if err := os.WriteFile(sharedPath, []byte(sharedRules), 0644); err != nil {
+		t.Fatalf("Failed to write shared rules: %v", err)
+	}
+
+	configContent := fmt.Sprintf(`
+proxy:
+  - listen: "localhost:8081"
+    target: "http://localhost:8080"
+    rules:
+      - include: %s
+
+rules:
+  - include: %s
+`, sharedPath, sharedPath)
+
+	configPath := filepath.Join(tmpDir, "main.yml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	cfg, err := Load([]string{configPath}, CliOverrides{})
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+
+	if len(cfg.Proxies) != 1 {
+		t.Fatalf("expected 1 proxy, got %d", len(cfg.Proxies))
+	}
+
+	if len(cfg.Proxies[0].Rules) != 1 {
+		t.Fatalf("proxy rules include not expanded, got %d", len(cfg.Proxies[0].Rules))
+	}
+	if cfg.Proxies[0].Rules[0].OnRequest[0].Merge["marker"] != "included" {
+		t.Errorf("expected proxy rule from include, got %+v", cfg.Proxies[0].Rules[0].OnRequest[0].Merge)
+	}
+
+	if len(cfg.Rules) != 1 {
+		t.Fatalf("shared rules include not expanded, got %d", len(cfg.Rules))
+	}
+	if cfg.Rules[0].OnRequest[0].Merge["marker"] != "included" {
+		t.Errorf("expected shared rule from include, got %+v", cfg.Rules[0].OnRequest[0].Merge)
+	}
+}
+
+func TestLoadIncludeMissingFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	configContent := `
+proxy:
+  listen: "localhost:8081"
+  target: "http://localhost:8080"
+
+rules:
+  - include: does_not_exist.yml
+`
+	configPath := filepath.Join(tmpDir, "main.yml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	_, err := Load([]string{configPath}, CliOverrides{})
+	if err == nil || !strings.Contains(err.Error(), "failed to read include file") {
+		t.Fatalf("expected include read error, got %v", err)
 	}
 }
 
@@ -664,6 +804,55 @@ func TestLoadEmpty(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "at least one config file required") {
 		t.Errorf("Error should mention empty config list, got: %v", err)
+	}
+}
+
+func TestLoadResolvesSSLCliOverridesRelativeToCwd(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yml")
+	configContent := `
+proxy:
+  listen: "localhost:9000"
+  target: "http://localhost:3000"
+rules:
+  - methods: GET
+    paths: /test
+    on_request:
+      - merge:
+          x: 1
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Failed to chdir: %v", err)
+	}
+
+	cfg, err := Load([]string{configPath}, CliOverrides{
+		SSLCert: "certs/cert.pem",
+		SSLKey:  "certs/key.pem",
+	})
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	wantCert := filepath.Join(tmpDir, "certs", "cert.pem")
+	wantKey := filepath.Join(tmpDir, "certs", "key.pem")
+
+	normalize := func(p string) string {
+		p = filepath.Clean(p)
+		p = strings.TrimPrefix(p, "/private")
+		return p
+	}
+
+	if got := normalize(cfg.Proxies[0].SSLCert); got != normalize(wantCert) {
+		t.Errorf("SSLCert = %s, want %s", got, normalize(wantCert))
+	}
+	if got := normalize(cfg.Proxies[0].SSLKey); got != normalize(wantKey) {
+		t.Errorf("SSLKey = %s, want %s", got, normalize(wantKey))
 	}
 }
 

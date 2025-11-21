@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -12,10 +13,10 @@ import (
 
 func TestModifyRequestWithNilBody(t *testing.T) {
 	cfg := &config.Config{
-		Proxy: config.ProxyConfig{
+		Proxies: []config.ProxyConfig{{
 			Listen: "localhost:8080",
 			Target: "http://localhost:9000",
-		},
+		}},
 		Rules: []config.Rule{
 			{
 				Methods:    newPatternField("GET"),
@@ -65,10 +66,10 @@ func TestModifyRequestWithNilBody(t *testing.T) {
 
 func TestModifyRequestWithEmptyBody(t *testing.T) {
 	cfg := &config.Config{
-		Proxy: config.ProxyConfig{
+		Proxies: []config.ProxyConfig{{
 			Listen: "localhost:8080",
 			Target: "http://localhost:9000",
-		},
+		}},
 		Rules: []config.Rule{
 			{
 				Methods:    newPatternField("POST"),
@@ -109,10 +110,10 @@ func TestModifyRequestWithEmptyBody(t *testing.T) {
 
 func TestModifyRequestWithJSONBody(t *testing.T) {
 	cfg := &config.Config{
-		Proxy: config.ProxyConfig{
+		Proxies: []config.ProxyConfig{{
 			Listen: "localhost:8080",
 			Target: "http://localhost:9000",
-		},
+		}},
 		Rules: []config.Rule{
 			{
 				Methods: newPatternField("POST"),
@@ -217,10 +218,10 @@ func TestModifyRequestGETWithPathRewrite(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &config.Config{
-				Proxy: config.ProxyConfig{
+				Proxies: []config.ProxyConfig{{
 					Listen: "localhost:8080",
 					Target: "http://localhost:9000",
-				},
+				}},
 				Rules: []config.Rule{
 					{
 						Methods:    newPatternField(tt.method),
@@ -275,10 +276,10 @@ func TestModifyRequestGETWithPathRewrite(t *testing.T) {
 
 func TestModifyRequestNonJSONBody(t *testing.T) {
 	cfg := &config.Config{
-		Proxy: config.ProxyConfig{
+		Proxies: []config.ProxyConfig{{
 			Listen: "localhost:8080",
 			Target: "http://localhost:9000",
-		},
+		}},
 		Rules: []config.Rule{
 			{
 				Methods: newPatternField("POST"),
@@ -323,10 +324,10 @@ func TestModifyRequestNonJSONBody(t *testing.T) {
 
 func TestModifyRequestNoMatchingRule(t *testing.T) {
 	cfg := &config.Config{
-		Proxy: config.ProxyConfig{
+		Proxies: []config.ProxyConfig{{
 			Listen: "localhost:8080",
 			Target: "http://localhost:9000",
-		},
+		}},
 		Rules: []config.Rule{
 			{
 				Methods: newPatternField("POST"),
@@ -367,10 +368,10 @@ func TestModifyRequestNoMatchingRule(t *testing.T) {
 
 func TestModifyRequestStackingRules(t *testing.T) {
 	cfg := &config.Config{
-		Proxy: config.ProxyConfig{
+		Proxies: []config.ProxyConfig{{
 			Listen: "localhost:8080",
 			Target: "http://localhost:9000",
-		},
+		}},
 		Rules: []config.Rule{
 			// Rule 1: Adds temperature
 			{
@@ -468,10 +469,10 @@ func TestModifyRequestStackingRules(t *testing.T) {
 
 func TestModifyRequestStackingWithConditionalMatch(t *testing.T) {
 	cfg := &config.Config{
-		Proxy: config.ProxyConfig{
+		Proxies: []config.ProxyConfig{{
 			Listen: "localhost:8080",
 			Target: "http://localhost:9000",
-		},
+		}},
 		Rules: []config.Rule{
 			// Rule 1: Adds type field
 			{
@@ -557,10 +558,10 @@ func TestModifyRequestStackingWithConditionalMatch(t *testing.T) {
 // allowing rule 1's modifications to affect rule 2's operation matching
 func TestLazySequentialMatching(t *testing.T) {
 	cfg := &config.Config{
-		Proxy: config.ProxyConfig{
+		Proxies: []config.ProxyConfig{{
 			Listen: "localhost:8080",
 			Target: "http://localhost:9000",
-		},
+		}},
 		Rules: []config.Rule{
 			// Rule 1: Transform "alias" field to "model" field
 			{
@@ -652,5 +653,75 @@ func TestLazySequentialMatching(t *testing.T) {
 
 	if provider, ok := result["provider"].(string); !ok || provider != "openai" {
 		t.Errorf("Expected provider to be 'openai' (set by rule 2), got %v", result["provider"])
+	}
+}
+
+func TestModifyResponseUsesLastMatchedRule(t *testing.T) {
+	rules := []config.Rule{
+		{
+			Methods:    newPatternField("POST"),
+			Paths:      newPatternField("^/api/chat$"),
+			OnResponse: []config.Operation{{Merge: map[string]any{"rule": "one"}}},
+		},
+		{
+			Methods: newPatternField("POST"),
+			Paths:   newPatternField("^/api/.*$"),
+			OnResponse: []config.Operation{
+				{
+					Delete: []string{"remove"},
+					Merge:  map[string]any{"rule": "two"},
+				},
+			},
+		},
+	}
+
+	cfg := &config.Config{
+		Proxies: []config.ProxyConfig{{
+			Listen: "localhost:8080",
+			Target: "http://localhost:9000",
+			Rules:  rules,
+		}},
+		Rules: rules,
+	}
+
+	if err := config.Validate(cfg); err != nil {
+		t.Fatalf("Config validation failed: %v", err)
+	}
+	if err := config.CompileTemplates(cfg); err != nil {
+		t.Fatalf("Template compilation failed: %v", err)
+	}
+
+	reqBody := map[string]any{"remove": "me", "keep": "ok"}
+	bodyBytes, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest("POST", "/api/chat", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+
+	// Both rules should match; last one should be stored in context
+	ModifyRequest(req, cfg)
+
+	respBody := map[string]any{"remove": "me", "keep": "ok"}
+	respBytes, _ := json.Marshal(respBody)
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(bytes.NewReader(respBytes)),
+		Request:    req,
+	}
+
+	if err := ModifyResponse(resp, cfg); err != nil {
+		t.Fatalf("ModifyResponse failed: %v", err)
+	}
+
+	modifiedBytes, _ := io.ReadAll(resp.Body)
+	var result map[string]any
+	if err := json.Unmarshal(modifiedBytes, &result); err != nil {
+		t.Fatalf("Failed to parse modified response: %v", err)
+	}
+
+	if _, exists := result["remove"]; exists {
+		t.Fatalf("expected 'remove' field to be deleted, got %v", result)
+	}
+	if result["rule"] != "two" {
+		t.Fatalf("expected last matched rule to apply, rule=%v", result["rule"])
 	}
 }

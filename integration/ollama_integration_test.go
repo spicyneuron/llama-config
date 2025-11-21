@@ -1,4 +1,4 @@
-package main
+package integration
 
 import (
 	"bytes"
@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/spicyneuron/llama-config-proxy/config"
 	"github.com/spicyneuron/llama-config-proxy/proxy"
@@ -38,8 +40,35 @@ func loadTestFixture(t *testing.T, filename string) map[string]any {
 func loadTestConfig(t *testing.T, filename string) *config.Config {
 	t.Helper()
 
-	path := filepath.Join("examples", filename)
-	cfg, err := config.Load([]string{path}, config.CliOverrides{})
+	path := filepath.Join("..", "examples", filename)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("Failed to read config %s: %v", filename, err)
+	}
+
+	var rules []config.Rule
+	if err := yaml.Unmarshal(data, &rules); err == nil && len(rules) > 0 {
+		cfg := &config.Config{
+			Proxies: []config.ProxyConfig{{
+				Listen: "localhost:0",
+				Target: "http://localhost:0",
+			}},
+			Rules: rules,
+		}
+
+		if err := config.Validate(cfg); err != nil {
+			t.Fatalf("Failed to validate %s: %v", filename, err)
+		}
+		if err := config.CompileTemplates(cfg); err != nil {
+			t.Fatalf("Failed to compile templates for %s: %v", filename, err)
+		}
+		return cfg
+	}
+
+	cfg, err := config.Load([]string{path}, config.CliOverrides{
+		Listen: "localhost:0",
+		Target: "http://localhost:0",
+	})
 	if err != nil {
 		t.Fatalf("Failed to load config %s: %v", filename, err)
 	}
@@ -52,7 +81,7 @@ func TestOllamaChatRequestToOpenAI(t *testing.T) {
 	ollamaRequest := loadTestFixture(t, "ollama-chat-request.json")
 
 	// Load the complete Ollama transformation config
-	cfg := loadTestConfig(t, "ollama.yml")
+	cfg := loadTestConfig(t, "rules-ollama.yml")
 
 	// Create a test request
 	bodyBytes, _ := json.Marshal(ollamaRequest)
@@ -116,7 +145,7 @@ func TestOllamaChatRequestWithFormatToOpenAI(t *testing.T) {
 	// Load Ollama structured output request fixture
 	ollamaRequest := loadTestFixture(t, "ollama-chat-request-structured.json")
 
-	cfg := loadTestConfig(t, "ollama.yml")
+	cfg := loadTestConfig(t, "rules-ollama.yml")
 
 	bodyBytes, _ := json.Marshal(ollamaRequest)
 	req := httptest.NewRequest("POST", "/api/chat", bytes.NewReader(bodyBytes))
@@ -149,7 +178,7 @@ func TestOllamaChatRequestWithToolsToOpenAI(t *testing.T) {
 	// Load Ollama tools request fixture
 	ollamaRequest := loadTestFixture(t, "ollama-chat-request-tools.json")
 
-	cfg := loadTestConfig(t, "ollama.yml")
+	cfg := loadTestConfig(t, "rules-ollama.yml")
 
 	bodyBytes, _ := json.Marshal(ollamaRequest)
 	req := httptest.NewRequest("POST", "/api/chat", bytes.NewReader(bodyBytes))
@@ -178,7 +207,7 @@ func TestOpenAIResponseToOllamaChat(t *testing.T) {
 	// Load OpenAI response fixture
 	openaiResponse := loadTestFixture(t, "openai-chat-response.json")
 
-	cfg := loadTestConfig(t, "ollama.yml")
+	cfg := loadTestConfig(t, "rules-ollama.yml")
 
 	// Create a simple request to trigger the response transformation
 	req := httptest.NewRequest("POST", "/api/chat", bytes.NewReader([]byte("{}")))
@@ -274,7 +303,7 @@ func TestOpenAIModelsToOllamaTags(t *testing.T) {
 	// Load OpenAI models response fixture
 	openaiModels := loadTestFixture(t, "openai-models-response.json")
 
-	cfg := loadTestConfig(t, "ollama.yml")
+	cfg := loadTestConfig(t, "rules-ollama.yml")
 
 	// Create a request
 	req := httptest.NewRequest("GET", "/api/tags", nil)
