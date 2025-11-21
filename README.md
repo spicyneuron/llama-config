@@ -19,11 +19,11 @@ llama-config-proxy --config config.yml
 
 **Notes:**
 
-- Each request's model will be compared against your rules, and if matching, receive updated `params`.
-- First match wins, so order your rules from specific to general.
-- Use `all: true` to match every request, regardless of model.
+- `proxy:` is now a list, so you can run multiple listeners (HTTP/HTTPS, or multiple backends) in one file.
+- Keep rules next to each proxy, or reuse them with `include:`—works for both proxy entries and rule lists.
+- CLI overrides for listen/target/timeout/SSL only work when exactly one proxy is defined in the file.
+- First matching rule wins; order rules from specific to general. Use `all: true` to match every request.
 - Supports SSL termination (works great with [mkcert](https://github.com/FiloSottile/mkcert)).
-- All `proxy:` settings can also be set as CLI flags.
 
 ## Development
 
