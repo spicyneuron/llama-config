@@ -7,8 +7,26 @@ import (
 
 // CompileTemplates compiles all template strings in rules
 func CompileTemplates(cfg *Config) error {
-	for i := range cfg.Rules {
-		rule := &cfg.Rules[i]
+	// Compile shared rules first
+	if err := compileRuleTemplates(cfg.Rules, "global"); err != nil {
+		return err
+	}
+
+	for i := range cfg.Proxies {
+		if len(cfg.Proxies[i].Rules) == 0 {
+			continue
+		}
+		if err := compileRuleTemplates(cfg.Proxies[i].Rules, fmt.Sprintf("proxy_%d", i)); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func compileRuleTemplates(rules []Rule, prefix string) error {
+	for i := range rules {
+		rule := &rules[i]
 
 		// Convert config operations to execution types
 		opRule := &CompiledRule{
@@ -21,13 +39,13 @@ func CompileTemplates(cfg *Config) error {
 			opRule.OnRequest[j] = convertOperation(op)
 
 			if op.Template != "" {
-				tmpl, err := template.New(fmt.Sprintf("rule_%d_request_%d", i, j)).
+				tmpl, err := template.New(fmt.Sprintf("%s_rule_%d_request_%d", prefix, i, j)).
 					Funcs(TemplateFuncs).
 					Parse(op.Template)
 				if err != nil {
 					return fmt.Errorf("rule %d request operation %d: %w", i, j, err)
 				}
-				logDebug("Compiled request template for rule %d, operation %d", i, j)
+				logDebug("Compiled request template for %s rule %d, operation %d", prefix, i, j)
 				opRule.OnRequestTemplates = append(opRule.OnRequestTemplates, tmpl)
 			} else {
 				opRule.OnRequestTemplates = append(opRule.OnRequestTemplates, nil)
@@ -39,13 +57,13 @@ func CompileTemplates(cfg *Config) error {
 			opRule.OnResponse[j] = convertOperation(op)
 
 			if op.Template != "" {
-				tmpl, err := template.New(fmt.Sprintf("rule_%d_response_%d", i, j)).
+				tmpl, err := template.New(fmt.Sprintf("%s_rule_%d_response_%d", prefix, i, j)).
 					Funcs(TemplateFuncs).
 					Parse(op.Template)
 				if err != nil {
 					return fmt.Errorf("rule %d response operation %d: %w", i, j, err)
 				}
-				logDebug("Compiled response template for rule %d, operation %d", i, j)
+				logDebug("Compiled response template for %s rule %d, operation %d", prefix, i, j)
 				opRule.OnResponseTemplates = append(opRule.OnResponseTemplates, tmpl)
 			} else {
 				opRule.OnResponseTemplates = append(opRule.OnResponseTemplates, nil)
@@ -54,7 +72,6 @@ func CompileTemplates(cfg *Config) error {
 
 		rule.OpRule = opRule
 	}
-
 	return nil
 }
 

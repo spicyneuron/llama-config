@@ -71,79 +71,100 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	config.SetDebugMode(cfg.Proxy.Debug)
-	proxy.SetDebugMode(cfg.Proxy.Debug)
+	debugEnabled := false
+	for _, proxyCfg := range cfg.Proxies {
+		if proxyCfg.Debug {
+			debugEnabled = true
+			break
+		}
+	}
+
+	config.SetDebugMode(debugEnabled)
+	proxy.SetDebugMode(debugEnabled)
 	if len(configPaths) == 1 {
 		log.Printf("Loaded config from: %s", configPaths[0])
 	} else {
 		log.Printf("Loaded config from %d files: %v", len(configPaths), configPaths)
 	}
 
-	targetURLParsed, err := url.Parse(cfg.Proxy.Target)
-	if err != nil {
-		log.Fatalf("Invalid target server URL: %v", err)
-	}
+	errCh := make(chan error, len(cfg.Proxies))
 
-	reverseProxy := httputil.NewSingleHostReverseProxy(targetURLParsed)
-
-	if cfg.Proxy.Timeout > 0 {
-		reverseProxy.Transport = &http.Transport{
-			TLSHandshakeTimeout:   cfg.Proxy.Timeout,
-			ResponseHeaderTimeout: cfg.Proxy.Timeout,
+	for i, proxyCfg := range cfg.Proxies {
+		proxyCfg := proxyCfg // capture loop variable
+		proxyConfigForHandlers := &config.Config{
+			Proxies: []config.ProxyConfig{proxyCfg},
+			Rules:   proxyCfg.Rules,
 		}
-		log.Printf("Configured timeout: %v", cfg.Proxy.Timeout)
-		if cfg.Proxy.Debug {
-			log.Printf("[DEBUG] Transport timeouts: TLS handshake=%v, response header=%v",
-				cfg.Proxy.Timeout, cfg.Proxy.Timeout)
+
+		targetURLParsed, err := url.Parse(proxyCfg.Target)
+		if err != nil {
+			log.Fatalf("Proxy %d has invalid target server URL: %v", i, err)
 		}
+
+		reverseProxy := httputil.NewSingleHostReverseProxy(targetURLParsed)
+
+		if proxyCfg.Timeout > 0 {
+			reverseProxy.Transport = &http.Transport{
+				TLSHandshakeTimeout:   proxyCfg.Timeout,
+				ResponseHeaderTimeout: proxyCfg.Timeout,
+			}
+			log.Printf("Configured timeout for %s: %v", proxyCfg.Listen, proxyCfg.Timeout)
+			if proxyCfg.Debug {
+				log.Printf("[DEBUG] Transport timeouts: TLS handshake=%v, response header=%v",
+					proxyCfg.Timeout, proxyCfg.Timeout)
+			}
+		}
+
+		originalDirector := reverseProxy.Director
+		reverseProxy.Director = func(req *http.Request) {
+			log.Printf("[%s] %s %s", proxyCfg.Listen, req.Method, req.URL.Path)
+			originalDirector(req)
+			proxy.ModifyRequest(req, proxyConfigForHandlers)
+		}
+
+		// Add response modifier
+		reverseProxy.ModifyResponse = func(resp *http.Response) error {
+			return proxy.ModifyResponse(resp, proxyConfigForHandlers)
+		}
+
+		server := createServer(proxyCfg, reverseProxy)
+
+		go func(p config.ProxyConfig, srv *http.Server) {
+			if p.SSLCert != "" && p.SSLKey != "" {
+				log.Printf("Proxying https://%s to %s", p.Listen, p.Target)
+				errCh <- srv.ListenAndServeTLS(p.SSLCert, p.SSLKey)
+			} else {
+				log.Printf("Proxying http://%s to %s", p.Listen, p.Target)
+				errCh <- srv.ListenAndServe()
+			}
+		}(proxyCfg, server)
 	}
 
-	originalDirector := reverseProxy.Director
-	reverseProxy.Director = func(req *http.Request) {
-		log.Printf("%s %s", req.Method, req.URL.Path)
-		originalDirector(req)
-		proxy.ModifyRequest(req, cfg)
-	}
-
-	// Add response modifier
-	reverseProxy.ModifyResponse = func(resp *http.Response) error {
-		return proxy.ModifyResponse(resp, cfg)
-	}
-
-	listenAddrFinal := cfg.Proxy.Listen
-	server := createServer(listenAddrFinal, reverseProxy, cfg)
-
-	if cfg.Proxy.SSLCert != "" && cfg.Proxy.SSLKey != "" {
-		log.Printf("Proxying https://%s to %s", listenAddrFinal, cfg.Proxy.Target)
-		log.Fatalf("HTTPS server failed: %v", server.ListenAndServeTLS(cfg.Proxy.SSLCert, cfg.Proxy.SSLKey))
-	} else {
-		log.Printf("Proxying http://%s to %s", listenAddrFinal, cfg.Proxy.Target)
-		log.Fatalf("HTTP server failed: %v", server.ListenAndServe())
-	}
+	log.Fatalf("Proxy server failed: %v", <-errCh)
 }
 
-func createServer(addr string, handler http.Handler, cfg *config.Config) *http.Server {
+func createServer(cfg config.ProxyConfig, handler http.Handler) *http.Server {
 	server := &http.Server{
-		Addr:    addr,
+		Addr:    cfg.Listen,
 		Handler: handler,
 	}
 
-	if cfg.Proxy.SSLCert != "" && cfg.Proxy.SSLKey != "" {
-		cert, err := tls.LoadX509KeyPair(cfg.Proxy.SSLCert, cfg.Proxy.SSLKey)
+	if cfg.SSLCert != "" && cfg.SSLKey != "" {
+		cert, err := tls.LoadX509KeyPair(cfg.SSLCert, cfg.SSLKey)
 		if err != nil {
 			log.Fatalf("Failed to load SSL certificates: %v", err)
 		}
-		if cfg.Proxy.Debug {
+		if cfg.Debug {
 			log.Printf("[DEBUG] Loaded SSL certificate from: cert=%s, key=%s",
-				cfg.Proxy.SSLCert, cfg.Proxy.SSLKey)
+				cfg.SSLCert, cfg.SSLKey)
 		}
 		server.TLSConfig = &tls.Config{
 			Certificates: []tls.Certificate{cert},
 		}
 	}
 
-	server.ReadTimeout = cfg.Proxy.Timeout
-	server.WriteTimeout = cfg.Proxy.Timeout
+	server.ReadTimeout = cfg.Timeout
+	server.WriteTimeout = cfg.Timeout
 
 	return server
 }

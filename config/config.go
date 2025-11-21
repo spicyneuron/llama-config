@@ -26,8 +26,8 @@ func logDebug(format string, args ...any) {
 
 // Config represents the full proxy configuration
 type Config struct {
-	Proxy ProxyConfig `yaml:"proxy"`
-	Rules []Rule      `yaml:"rules"`
+	Proxies ProxyEntries `yaml:"proxy"`
+	Rules   []Rule       `yaml:"rules"`
 }
 
 // ProxyConfig contains proxy-level settings
@@ -38,6 +38,34 @@ type ProxyConfig struct {
 	SSLCert string        `yaml:"ssl_cert"`
 	SSLKey  string        `yaml:"ssl_key"`
 	Debug   bool          `yaml:"debug"`
+	Rules   []Rule        `yaml:"rules"`
+}
+
+// ProxyEntries allows proxy to be defined as a single map or a list
+type ProxyEntries []ProxyConfig
+
+// UnmarshalYAML accepts either a single proxy map or a sequence of proxies
+func (p *ProxyEntries) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.SequenceNode:
+		var proxies []ProxyConfig
+		if err := value.Decode(&proxies); err != nil {
+			return err
+		}
+		*p = proxies
+		return nil
+	case yaml.MappingNode:
+		var proxy ProxyConfig
+		if err := value.Decode(&proxy); err != nil {
+			return err
+		}
+		*p = []ProxyConfig{proxy}
+		return nil
+	case 0:
+		return nil
+	default:
+		return fmt.Errorf("proxy must be a map or list")
+	}
 }
 
 // CliOverrides holds command-line flag overrides
@@ -140,50 +168,26 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, error) {
 	var mergedConfig *Config
 
 	for i, configPath := range configPaths {
-		data, err := os.ReadFile(configPath)
+		cfg, err := loadConfigFile(configPath)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read config file %s: %w", configPath, err)
-		}
-
-		logDebug("Loading config file %d/%d: %s (%d bytes)", i+1, len(configPaths), configPath, len(data))
-
-		var cfg Config
-		if err := yaml.Unmarshal(data, &cfg); err != nil {
 			return nil, fmt.Errorf("failed to parse config file %s: %w", configPath, err)
 		}
 
+		logDebug("Loading config file %d/%d: %s", i+1, len(configPaths), configPath)
+
 		// Resolve paths relative to this config file's directory
 		configDir := filepath.Dir(configPath)
-		cfg.Proxy.SSLCert = ResolvePath(cfg.Proxy.SSLCert, configDir)
-		cfg.Proxy.SSLKey = ResolvePath(cfg.Proxy.SSLKey, configDir)
+		for i := range cfg.Proxies {
+			cfg.Proxies[i].SSLCert = ResolvePath(cfg.Proxies[i].SSLCert, configDir)
+			cfg.Proxies[i].SSLKey = ResolvePath(cfg.Proxies[i].SSLKey, configDir)
+		}
 
 		if i == 0 {
 			mergedConfig = &cfg
 		} else {
-			logDebug("Merging config from %s (proxy overrides: listen=%v, target=%v, timeout=%v)",
-				configPath, cfg.Proxy.Listen != "", cfg.Proxy.Target != "", cfg.Proxy.Timeout != 0)
-
-			if cfg.Proxy.Listen != "" {
-				mergedConfig.Proxy.Listen = cfg.Proxy.Listen
-			}
-			if cfg.Proxy.Target != "" {
-				mergedConfig.Proxy.Target = cfg.Proxy.Target
-			}
-			if cfg.Proxy.Timeout != 0 {
-				mergedConfig.Proxy.Timeout = cfg.Proxy.Timeout
-			}
-			if cfg.Proxy.SSLCert != "" {
-				mergedConfig.Proxy.SSLCert = cfg.Proxy.SSLCert
-			}
-			if cfg.Proxy.SSLKey != "" {
-				mergedConfig.Proxy.SSLKey = cfg.Proxy.SSLKey
-			}
-			if cfg.Proxy.Debug {
-				mergedConfig.Proxy.Debug = cfg.Proxy.Debug
-			}
-
+			mergedConfig.Proxies = append(mergedConfig.Proxies, cfg.Proxies...)
 			mergedConfig.Rules = append(mergedConfig.Rules, cfg.Rules...)
-			logDebug("Added %d rules from %s (total rules: %d)", len(cfg.Rules), configPath, len(mergedConfig.Rules))
+			logDebug("Merged config from %s (proxies: +%d, rules: +%d)", configPath, len(cfg.Proxies), len(cfg.Rules))
 		}
 	}
 
@@ -193,16 +197,43 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, error) {
 		return nil, fmt.Errorf("failed to get current directory: %w", err)
 	}
 
-	// Resolve CLI override paths relative to PWD, then apply overrides
-	applyOverrides(&mergedConfig.Proxy, overrides, pwd)
+	// Resolve to a final proxy list (supports either proxy or proxies)
+	proxies := mergedConfig.Proxies
+	if len(proxies) == 0 && overridesHasProxyValues(overrides) {
+		proxies = append(proxies, ProxyConfig{})
+	}
+	if len(proxies) == 0 {
+		return nil, fmt.Errorf("no proxies configured; add a proxy or proxies section")
+	}
+
+	if len(proxies) > 1 && overridesHasProxyValues(overrides) {
+		return nil, fmt.Errorf("CLI overrides for listen/target/timeout/ssl are only supported with a single proxy; define multiple listeners in the config file instead")
+	}
+
+	for i := range proxies {
+		if len(proxies) == 1 {
+			// Resolve CLI override paths relative to PWD, then apply overrides
+			applyOverrides(&proxies[i], overrides, pwd)
+		} else if overrides.Debug {
+			// Allow global debug enablement
+			proxies[i].Debug = true
+		}
+
+		if proxies[i].Timeout == 0 {
+			proxies[i].Timeout = 60 * time.Second
+			logDebug("Using default timeout for proxy %d: %v", i, proxies[i].Timeout)
+		}
+
+		// If proxy has no rules, inherit shared rules
+		if len(proxies[i].Rules) == 0 && len(mergedConfig.Rules) > 0 {
+			proxies[i].Rules = append([]Rule(nil), mergedConfig.Rules...)
+		}
+	}
+
+	mergedConfig.Proxies = proxies
 
 	logDebug("Applied CLI overrides: listen=%q, target=%q, timeout=%v, debug=%v",
 		overrides.Listen, overrides.Target, overrides.Timeout, overrides.Debug)
-
-	if mergedConfig.Proxy.Timeout == 0 {
-		mergedConfig.Proxy.Timeout = 60 * time.Second
-		logDebug("Using default timeout: %v", mergedConfig.Proxy.Timeout)
-	}
 
 	if err := Validate(mergedConfig); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)
@@ -212,9 +243,126 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, error) {
 		return nil, fmt.Errorf("template compilation failed: %w", err)
 	}
 
-	logDebug("Successfully compiled %d rules with templates", len(mergedConfig.Rules))
+	logDebug("Successfully compiled rules for %d proxies", len(mergedConfig.Proxies))
 
 	return mergedConfig, nil
+}
+
+func loadConfigFile(configPath string) (Config, error) {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return Config{}, fmt.Errorf("failed to read config file %s: %w", configPath, err)
+	}
+
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return Config{}, fmt.Errorf("failed to parse config file %s: %w", configPath, err)
+	}
+
+	if err := expandIncludes(&root, filepath.Dir(configPath)); err != nil {
+		return Config{}, err
+	}
+
+	var cfg Config
+	if err := root.Decode(&cfg); err != nil {
+		return Config{}, fmt.Errorf("failed to decode config %s: %w", configPath, err)
+	}
+
+	return cfg, nil
+}
+
+func expandIncludes(node *yaml.Node, baseDir string) error {
+	switch node.Kind {
+	case yaml.DocumentNode:
+		for _, child := range node.Content {
+			if err := expandIncludes(child, baseDir); err != nil {
+				return err
+			}
+		}
+	case yaml.MappingNode:
+		for i := 0; i < len(node.Content); i += 2 {
+			key := node.Content[i]
+			val := node.Content[i+1]
+
+			if key.Value == "include" && len(node.Content) == 2 {
+				included, err := loadIncludeNode(val, baseDir)
+				if err != nil {
+					return err
+				}
+				*node = *included
+				return expandIncludes(node, baseDir)
+			}
+
+			if err := expandIncludes(val, baseDir); err != nil {
+				return err
+			}
+		}
+	case yaml.SequenceNode:
+		var newContent []*yaml.Node
+		for _, item := range node.Content {
+			if isIncludeNode(item) {
+				included, err := loadIncludeNode(item.Content[1], baseDir)
+				if err != nil {
+					return err
+				}
+
+				if included.Kind == yaml.SequenceNode {
+					for _, child := range included.Content {
+						if err := expandIncludes(child, baseDir); err != nil {
+							return err
+						}
+						newContent = append(newContent, child)
+					}
+				} else {
+					if err := expandIncludes(included, baseDir); err != nil {
+						return err
+					}
+					newContent = append(newContent, included)
+				}
+				continue
+			}
+
+			if err := expandIncludes(item, baseDir); err != nil {
+				return err
+			}
+			newContent = append(newContent, item)
+		}
+		node.Content = newContent
+	}
+	return nil
+}
+
+func isIncludeNode(node *yaml.Node) bool {
+	return node.Kind == yaml.MappingNode &&
+		len(node.Content) == 2 &&
+		node.Content[0].Value == "include"
+}
+
+func loadIncludeNode(pathNode *yaml.Node, baseDir string) (*yaml.Node, error) {
+	if pathNode.Kind != yaml.ScalarNode {
+		return nil, fmt.Errorf("include path must be a string")
+	}
+
+	includePath := ResolvePath(pathNode.Value, baseDir)
+	data, err := os.ReadFile(includePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read include file %s: %w", includePath, err)
+	}
+
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return nil, fmt.Errorf("failed to parse include file %s: %w", includePath, err)
+	}
+
+	if err := expandIncludes(&root, filepath.Dir(includePath)); err != nil {
+		return nil, err
+	}
+
+	// yaml.Unmarshal produces a DocumentNode with single child
+	if len(root.Content) > 0 {
+		return root.Content[0], nil
+	}
+	return &root, nil
 }
 
 func applyOverrides(proxy *ProxyConfig, overrides CliOverrides, pwd string) {
@@ -238,6 +386,14 @@ func applyOverrides(proxy *ProxyConfig, overrides CliOverrides, pwd string) {
 	if overrides.Debug {
 		proxy.Debug = overrides.Debug
 	}
+}
+
+func overridesHasProxyValues(overrides CliOverrides) bool {
+	return overrides.Listen != "" ||
+		overrides.Target != "" ||
+		overrides.Timeout > 0 ||
+		overrides.SSLCert != "" ||
+		overrides.SSLKey != ""
 }
 
 // ResolvePath resolves a file path relative to baseDir if not absolute

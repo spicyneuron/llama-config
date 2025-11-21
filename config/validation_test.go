@@ -15,10 +15,10 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "valid config",
 			config: &Config{
-				Proxy: ProxyConfig{
+				Proxies: ProxyEntries{{
 					Listen: "localhost:8081",
 					Target: "http://localhost:8080",
-				},
+				}},
 				Rules: []Rule{
 					{
 						Methods: newPatternField("POST"),
@@ -34,9 +34,9 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "missing listen address",
 			config: &Config{
-				Proxy: ProxyConfig{
+				Proxies: ProxyEntries{{
 					Target: "http://localhost:8080",
-				},
+				}},
 				Rules: []Rule{
 					{
 						Methods:   newPatternField("POST"),
@@ -46,14 +46,14 @@ func TestValidateConfig(t *testing.T) {
 				},
 			},
 			wantErr: true,
-			errMsg:  "proxy.listen is required",
+			errMsg:  "proxy[0].listen is required",
 		},
 		{
 			name: "missing target",
 			config: &Config{
-				Proxy: ProxyConfig{
+				Proxies: ProxyEntries{{
 					Listen: "localhost:8081",
-				},
+				}},
 				Rules: []Rule{
 					{
 						Methods:   newPatternField("POST"),
@@ -63,15 +63,15 @@ func TestValidateConfig(t *testing.T) {
 				},
 			},
 			wantErr: true,
-			errMsg:  "proxy.target is required",
+			errMsg:  "proxy[0].target is required",
 		},
 		{
 			name: "invalid target URL",
 			config: &Config{
-				Proxy: ProxyConfig{
+				Proxies: ProxyEntries{{
 					Listen: "localhost:8081",
 					Target: "://invalid",
-				},
+				}},
 				Rules: []Rule{
 					{
 						Methods:   newPatternField("POST"),
@@ -81,16 +81,16 @@ func TestValidateConfig(t *testing.T) {
 				},
 			},
 			wantErr: true,
-			errMsg:  "invalid proxy.target URL",
+			errMsg:  "proxy[0].target URL is invalid",
 		},
 		{
 			name: "SSL cert without key",
 			config: &Config{
-				Proxy: ProxyConfig{
+				Proxies: ProxyEntries{{
 					Listen:  "localhost:8081",
 					Target:  "http://localhost:8080",
 					SSLCert: "cert.pem",
-				},
+				}},
 				Rules: []Rule{
 					{
 						Methods:   newPatternField("POST"),
@@ -105,11 +105,11 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "SSL key without cert",
 			config: &Config{
-				Proxy: ProxyConfig{
+				Proxies: ProxyEntries{{
 					Listen: "localhost:8081",
 					Target: "http://localhost:8080",
 					SSLKey: "key.pem",
-				},
+				}},
 				Rules: []Rule{
 					{
 						Methods:   newPatternField("POST"),
@@ -134,6 +134,46 @@ func TestValidateConfig(t *testing.T) {
 				t.Errorf("Validate() error = %v, want error containing %q", err, tt.errMsg)
 			}
 		})
+	}
+}
+
+func TestValidateDuplicateListeners(t *testing.T) {
+	cfg := &Config{
+		Proxies: ProxyEntries{
+			{Listen: "localhost:8081", Target: "http://t1"},
+			{Listen: "localhost:8081", Target: "http://t2"},
+		},
+		Rules: []Rule{
+			{
+				Methods:   newPatternField("GET"),
+				Paths:     newPatternField("/"),
+				OnRequest: []Operation{{Merge: map[string]any{"x": 1}}},
+			},
+		},
+	}
+
+	err := Validate(cfg)
+	if err == nil || !strings.Contains(err.Error(), "proxy listeners must be unique") {
+		t.Fatalf("expected duplicate listener error, got %v", err)
+	}
+}
+
+func TestValidateOnResponseOnlyRules(t *testing.T) {
+	cfg := &Config{
+		Proxies: ProxyEntries{
+			{Listen: "localhost:8081", Target: "http://t1"},
+		},
+		Rules: []Rule{
+			{
+				Methods:    newPatternField("GET"),
+				Paths:      newPatternField("/ok"),
+				OnResponse: []Operation{{Merge: map[string]any{"processed": true}}},
+			},
+		},
+	}
+
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("expected on_response-only rule to be valid, got %v", err)
 	}
 }
 

@@ -8,25 +8,41 @@ import (
 
 // Validate checks the entire configuration for errors
 func Validate(config *Config) error {
-	if config.Proxy.Listen == "" {
-		return fmt.Errorf("proxy.listen is required")
-	}
-	if config.Proxy.Target == "" {
-		return fmt.Errorf("proxy.target is required")
+	if len(config.Proxies) == 0 {
+		return fmt.Errorf("proxy configuration is required")
 	}
 
-	if _, err := url.Parse(config.Proxy.Target); err != nil {
-		return fmt.Errorf("invalid proxy.target URL: %w", err)
-	}
+	seenListeners := make(map[string]struct{})
+	for i, proxy := range config.Proxies {
+		if proxy.Listen == "" {
+			return fmt.Errorf("proxy[%d].listen is required", i)
+		}
+		if proxy.Target == "" {
+			return fmt.Errorf("proxy[%d].target is required", i)
+		}
 
-	if (config.Proxy.SSLCert != "" && config.Proxy.SSLKey == "") ||
-		(config.Proxy.SSLCert == "" && config.Proxy.SSLKey != "") {
-		return fmt.Errorf("both ssl_cert and ssl_key must be provided together")
-	}
+		if _, err := url.Parse(proxy.Target); err != nil {
+			return fmt.Errorf("proxy[%d].target URL is invalid: %w", i, err)
+		}
 
-	for i := range config.Rules {
-		if err := validateRule(&config.Rules[i], i); err != nil {
-			return err
+		if (proxy.SSLCert != "" && proxy.SSLKey == "") ||
+			(proxy.SSLCert == "" && proxy.SSLKey != "") {
+			return fmt.Errorf("proxy[%d]: both ssl_cert and ssl_key must be provided together", i)
+		}
+
+		if _, exists := seenListeners[proxy.Listen]; exists {
+			return fmt.Errorf("proxy listeners must be unique; %s is duplicated", proxy.Listen)
+		}
+		seenListeners[proxy.Listen] = struct{}{}
+
+		rules := proxy.Rules
+		if len(rules) == 0 {
+			rules = config.Rules
+		}
+		for j := range rules {
+			if err := validateRule(&rules[j], j); err != nil {
+				return err
+			}
 		}
 	}
 
