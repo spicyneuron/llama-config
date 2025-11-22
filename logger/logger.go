@@ -17,9 +17,11 @@ const (
 )
 
 var (
-	currentLevel Level = LevelInfo
-	stdLogger          = log.New(os.Stdout, "", log.LstdFlags)
-	mu           sync.RWMutex
+	currentLevel      Level = LevelInfo
+	stdLogger               = log.New(os.Stdout, "", log.LstdFlags)
+	maxLogValueLength       = 4096
+	redactKeys              = []string{"authorization", "x-api-key", "api-key", "x-auth-token"}
+	mu                sync.RWMutex
 )
 
 // SetLevel sets the global log level.
@@ -89,8 +91,31 @@ func formatFields(kv ...any) string {
 
 		key := fmt.Sprintf("%v", kv[i])
 		val := kv[i+1]
-		builder.WriteString(fmt.Sprintf(" %s=%v", key, val))
+
+		if shouldRedact(key) {
+			builder.WriteString(fmt.Sprintf(" %s=%s", key, "[REDACTED]"))
+			continue
+		}
+
+		builder.WriteString(fmt.Sprintf(" %s=%s", key, truncateValue(fmt.Sprintf("%v", val))))
 	}
 
 	return builder.String()
+}
+
+func truncateValue(val string) string {
+	if len(val) <= maxLogValueLength {
+		return val
+	}
+	return val[:maxLogValueLength] + "...[truncated]"
+}
+
+func shouldRedact(key string) bool {
+	lower := strings.ToLower(key)
+	for _, k := range redactKeys {
+		if lower == k {
+			return true
+		}
+	}
+	return false
 }

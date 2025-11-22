@@ -65,16 +65,17 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 	if logger.IsDebug() {
 		logger.Debug("Inbound request", "method", req.Method, "path", req.URL.Path)
 
-		for key, values := range req.Header {
+		for key, values := range sanitizeHeaders(req.Header) {
 			for _, value := range values {
 				logger.Debug("Request header", "key", key, "value", value)
 			}
 		}
 
 		if len(body) > 0 {
-			var prettyJSON bytes.Buffer
-			json.Indent(&prettyJSON, body, "  ", "  ")
-			logger.Debug("Request body", "body", prettyJSON.String())
+			safeBody, truncated := sanitizeBody(body, 4096)
+			logger.Debug("Request body", "body", safeBody, "truncated", truncated)
+		} else {
+			logger.Debug("Request body omitted", "reason", "empty")
 		}
 	}
 
@@ -268,16 +269,17 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 	if logger.IsDebug() {
 		logger.Debug("Inbound response", "status", resp.StatusCode, "status_text", resp.Status)
 
-		for key, values := range resp.Header {
+		for key, values := range sanitizeHeaders(resp.Header) {
 			for _, value := range values {
 				logger.Debug("Response header", "key", key, "value", value)
 			}
 		}
 
 		if len(body) > 0 {
-			var prettyJSON bytes.Buffer
-			json.Indent(&prettyJSON, body, "  ", "  ")
-			logger.Debug("Response body", "body", prettyJSON.String())
+			safeBody, truncated := sanitizeBody(body, 4096)
+			logger.Debug("Response body", "body", safeBody, "truncated", truncated)
+		} else {
+			logger.Debug("Response body omitted", "reason", "empty")
 		}
 	}
 
