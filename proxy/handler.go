@@ -223,30 +223,36 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 
 // ModifyResponse processes the response through matching rules
 func ModifyResponse(resp *http.Response, cfg *config.Config) error {
+	method := resp.Request.Method
+	path := resp.Request.URL.Path
 	contentType := resp.Header.Get("Content-Type")
 	logger.Debug("Processing response", "status", resp.StatusCode, "content_type", contentType)
 
 	// Get the rule from context
 	matchingRule, ok := resp.Request.Context().Value(ruleContextKey).(*config.Rule)
 	if !ok || matchingRule == nil {
+		logger.Info("Response skipped: no matching rule", "method", method, "path", path, "status", resp.StatusCode, "content_type", contentType)
 		logger.Debug("No matching rule in context for response")
 		return nil
 	}
 
 	// Skip if no response operations
 	if len(matchingRule.OnResponse) == 0 {
+		logger.Info("Response skipped: no on_response operations", "method", method, "path", path, "status", resp.StatusCode, "content_type", contentType)
 		logger.Debug("No response operations defined for this rule")
 		return nil
 	}
 
 	// Route to streaming handler if SSE
 	if strings.Contains(contentType, "text/event-stream") {
+		logger.Info("Response streaming passthrough", "method", method, "path", path, "status", resp.StatusCode, "content_type", contentType)
 		logger.Debug("Routing to streaming response handler")
 		return ModifyStreamingResponse(resp, matchingRule)
 	}
 
 	// Skip if not JSON
 	if !strings.Contains(contentType, "application/json") {
+		logger.Info("Response skipped: non-JSON content type", "method", method, "path", path, "status", resp.StatusCode, "content_type", contentType)
 		logger.Debug("Skipping response modification (not JSON)")
 		return nil
 	}
@@ -304,6 +310,12 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 
 	resp.Body = io.NopCloser(bytes.NewReader(modifiedBody))
 	resp.ContentLength = int64(len(modifiedBody))
+
+	if modified {
+		logger.Info("Response transformed", "method", method, "path", path, "status", resp.StatusCode, "changes", len(appliedValues))
+	} else {
+		logger.Info("Response unchanged after on_response", "method", method, "path", path, "status", resp.StatusCode)
+	}
 
 	if modified && logger.IsDebug() {
 		logger.Debug("Response modifications applied", "changes", len(appliedValues))

@@ -101,6 +101,15 @@ func main() {
 		}
 
 		reverseProxy := httputil.NewSingleHostReverseProxy(targetURLParsed)
+		reverseProxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, err error) {
+			logger.Error("Reverse proxy error",
+				"listen", proxyCfg.Listen,
+				"target_host", targetURLParsed.Host,
+				"method", req.Method,
+				"path", req.URL.Path,
+				"err", err)
+			http.Error(rw, "Bad Gateway", http.StatusBadGateway)
+		}
 
 		if proxyCfg.Timeout > 0 {
 			reverseProxy.Transport = &http.Transport{
@@ -113,7 +122,6 @@ func main() {
 
 		originalDirector := reverseProxy.Director
 		reverseProxy.Director = func(req *http.Request) {
-			logger.Info("Proxy request", "listen", proxyCfg.Listen, "method", req.Method, "path", req.URL.Path)
 			originalDirector(req)
 			proxy.ModifyRequest(req, proxyConfigForHandlers)
 		}
