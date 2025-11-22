@@ -4,13 +4,13 @@ import (
 	"crypto/tls"
 	"flag"
 	"fmt"
-	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
 
 	"github.com/spicyneuron/llama-config-proxy/config"
+	"github.com/spicyneuron/llama-config-proxy/logger"
 	"github.com/spicyneuron/llama-config-proxy/proxy"
 )
 
@@ -68,7 +68,7 @@ func main() {
 
 	cfg, err := config.Load(configPaths, overrides)
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		logger.Fatal("Failed to load config", "err", err)
 	}
 
 	debugEnabled := false
@@ -79,12 +79,11 @@ func main() {
 		}
 	}
 
-	config.SetDebugMode(debugEnabled)
-	proxy.SetDebugMode(debugEnabled)
+	logger.EnableDebug(debugEnabled)
 	if len(configPaths) == 1 {
-		log.Printf("Loaded config from: %s", configPaths[0])
+		logger.Info("Loaded config file", "path", configPaths[0])
 	} else {
-		log.Printf("Loaded config from %d files: %v", len(configPaths), configPaths)
+		logger.Info("Loaded config files", "count", len(configPaths), "paths", configPaths)
 	}
 
 	errCh := make(chan error, len(cfg.Proxies))
@@ -98,7 +97,7 @@ func main() {
 
 		targetURLParsed, err := url.Parse(proxyCfg.Target)
 		if err != nil {
-			log.Fatalf("Proxy %d has invalid target server URL: %v", i, err)
+			logger.Fatal("Proxy has invalid target server URL", "index", i, "err", err)
 		}
 
 		reverseProxy := httputil.NewSingleHostReverseProxy(targetURLParsed)
@@ -108,16 +107,13 @@ func main() {
 				TLSHandshakeTimeout:   proxyCfg.Timeout,
 				ResponseHeaderTimeout: proxyCfg.Timeout,
 			}
-			log.Printf("Configured timeout for %s: %v", proxyCfg.Listen, proxyCfg.Timeout)
-			if proxyCfg.Debug {
-				log.Printf("[DEBUG] Transport timeouts: TLS handshake=%v, response header=%v",
-					proxyCfg.Timeout, proxyCfg.Timeout)
-			}
+			logger.Info("Configured proxy timeouts", "listen", proxyCfg.Listen, "timeout", proxyCfg.Timeout)
+			logger.Debug("Transport timeouts", "listen", proxyCfg.Listen, "tls_handshake", proxyCfg.Timeout, "response_header", proxyCfg.Timeout)
 		}
 
 		originalDirector := reverseProxy.Director
 		reverseProxy.Director = func(req *http.Request) {
-			log.Printf("[%s] %s %s", proxyCfg.Listen, req.Method, req.URL.Path)
+			logger.Info("Proxy request", "listen", proxyCfg.Listen, "method", req.Method, "path", req.URL.Path)
 			originalDirector(req)
 			proxy.ModifyRequest(req, proxyConfigForHandlers)
 		}
@@ -131,16 +127,16 @@ func main() {
 
 		go func(p config.ProxyConfig, srv *http.Server) {
 			if p.SSLCert != "" && p.SSLKey != "" {
-				log.Printf("Proxying https://%s to %s", p.Listen, p.Target)
+				logger.Info("Starting HTTPS proxy", "listen", p.Listen, "target", p.Target)
 				errCh <- srv.ListenAndServeTLS(p.SSLCert, p.SSLKey)
 			} else {
-				log.Printf("Proxying http://%s to %s", p.Listen, p.Target)
+				logger.Info("Starting HTTP proxy", "listen", p.Listen, "target", p.Target)
 				errCh <- srv.ListenAndServe()
 			}
 		}(proxyCfg, server)
 	}
 
-	log.Fatalf("Proxy server failed: %v", <-errCh)
+	logger.Fatal("Proxy server failed", "err", <-errCh)
 }
 
 func createServer(cfg config.ProxyConfig, handler http.Handler) *http.Server {
@@ -152,11 +148,7 @@ func createServer(cfg config.ProxyConfig, handler http.Handler) *http.Server {
 	if cfg.SSLCert != "" && cfg.SSLKey != "" {
 		cert, err := tls.LoadX509KeyPair(cfg.SSLCert, cfg.SSLKey)
 		if err != nil {
-			log.Fatalf("Failed to load SSL certificates: %v", err)
-		}
-		if cfg.Debug {
-			log.Printf("[DEBUG] Loaded SSL certificate from: cert=%s, key=%s",
-				cfg.SSLCert, cfg.SSLKey)
+			logger.Fatal("Failed to load SSL certificates", "err", err)
 		}
 		server.TLSConfig = &tls.Config{
 			Certificates: []tls.Certificate{cert},

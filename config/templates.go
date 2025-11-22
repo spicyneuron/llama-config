@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"text/template"
+
+	"github.com/spicyneuron/llama-config-proxy/logger"
 )
 
 // CompileTemplates compiles all template strings in rules
@@ -45,7 +47,7 @@ func compileRuleTemplates(rules []Rule, prefix string) error {
 				if err != nil {
 					return fmt.Errorf("rule %d request operation %d: %w", i, j, err)
 				}
-				logDebug("Compiled request template for %s rule %d, operation %d", prefix, i, j)
+				logger.Debug("Compiled request template", "scope", prefix, "rule_index", i, "operation_index", j)
 				opRule.OnRequestTemplates = append(opRule.OnRequestTemplates, tmpl)
 			} else {
 				opRule.OnRequestTemplates = append(opRule.OnRequestTemplates, nil)
@@ -63,7 +65,7 @@ func compileRuleTemplates(rules []Rule, prefix string) error {
 				if err != nil {
 					return fmt.Errorf("rule %d response operation %d: %w", i, j, err)
 				}
-				logDebug("Compiled response template for %s rule %d, operation %d", prefix, i, j)
+				logger.Debug("Compiled response template", "scope", prefix, "rule_index", i, "operation_index", j)
 				opRule.OnResponseTemplates = append(opRule.OnResponseTemplates, tmpl)
 			} else {
 				opRule.OnResponseTemplates = append(opRule.OnResponseTemplates, nil)

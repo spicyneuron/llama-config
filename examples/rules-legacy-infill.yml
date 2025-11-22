@@ -1,0 +1,12 @@
+# Code infill for Qwen 3 Coder, migrated from legacy-config.yml
+- methods: POST
+  paths: .*/infill
+  target_path: /upstream/030-qwen3-code/infill
+
+  on_request:
+    - merge:
+        temperature: 0.7
+        top_k: 20
+        top_p: 0.8
+        min_p: 0
+        repeat_penalty: 1.05

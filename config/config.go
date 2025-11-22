@@ -2,27 +2,14 @@ package config
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"regexp"
 	"time"
 
+	"github.com/spicyneuron/llama-config-proxy/logger"
 	"gopkg.in/yaml.v3"
 )
-
-var debugMode bool
-
-// SetDebugMode enables or disables debug logging
-func SetDebugMode(enabled bool) {
-	debugMode = enabled
-}
-
-func logDebug(format string, args ...any) {
-	if debugMode {
-		log.Printf("[DEBUG] "+format, args...)
-	}
-}
 
 // Config represents the full proxy configuration
 type Config struct {
@@ -173,7 +160,7 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, error) {
 			return nil, fmt.Errorf("failed to parse config file %s: %w", configPath, err)
 		}
 
-		logDebug("Loading config file %d/%d: %s", i+1, len(configPaths), configPath)
+		logger.Debug("Loading config file", "index", i+1, "total", len(configPaths), "path", configPath)
 
 		// Resolve paths relative to this config file's directory
 		configDir := filepath.Dir(configPath)
@@ -187,7 +174,7 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, error) {
 		} else {
 			mergedConfig.Proxies = append(mergedConfig.Proxies, cfg.Proxies...)
 			mergedConfig.Rules = append(mergedConfig.Rules, cfg.Rules...)
-			logDebug("Merged config from %s (proxies: +%d, rules: +%d)", configPath, len(cfg.Proxies), len(cfg.Rules))
+			logger.Debug("Merged config file", "path", configPath, "proxies_added", len(cfg.Proxies), "rules_added", len(cfg.Rules))
 		}
 	}
 
@@ -221,7 +208,7 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, error) {
 
 		if proxies[i].Timeout == 0 {
 			proxies[i].Timeout = 60 * time.Second
-			logDebug("Using default timeout for proxy %d: %v", i, proxies[i].Timeout)
+			logger.Debug("Using default timeout for proxy", "index", i, "timeout", proxies[i].Timeout)
 		}
 
 		// If proxy has no rules, inherit shared rules
@@ -232,8 +219,7 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, error) {
 
 	mergedConfig.Proxies = proxies
 
-	logDebug("Applied CLI overrides: listen=%q, target=%q, timeout=%v, debug=%v",
-		overrides.Listen, overrides.Target, overrides.Timeout, overrides.Debug)
+	logger.Debug("Applied CLI overrides", "listen", overrides.Listen, "target", overrides.Target, "timeout", overrides.Timeout, "debug", overrides.Debug)
 
 	if err := Validate(mergedConfig); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)
@@ -243,7 +229,7 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, error) {
 		return nil, fmt.Errorf("template compilation failed: %w", err)
 	}
 
-	logDebug("Successfully compiled rules for %d proxies", len(mergedConfig.Proxies))
+	logger.Debug("Successfully compiled rules", "proxies", len(mergedConfig.Proxies))
 
 	return mergedConfig, nil
 }

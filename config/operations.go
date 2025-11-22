@@ -6,10 +6,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
 	"maps"
 	"text/template"
 	"time"
+
+	"github.com/spicyneuron/llama-config-proxy/logger"
 )
 
 // CompiledRule holds a rule with compiled templates
@@ -59,12 +60,12 @@ func processOperations(data map[string]any, headers map[string]string, operation
 	bodyStrings := toStringMap(data)
 
 	for i, op := range operations {
-		logDebug("  Operation %d:", i)
+		logger.Debug("Operation evaluation", "index", i)
 
 		// Show match conditions
 		hasConditions := len(op.MatchBody) > 0 || len(op.MatchHeaders) > 0
 		if hasConditions {
-			logDebug("    Conditions:")
+			logger.Debug("Operation conditions", "index", i)
 		}
 
 		// Check body matching
@@ -73,22 +74,21 @@ func processOperations(data map[string]any, headers map[string]string, operation
 			for key, pattern := range op.MatchBody {
 				actualValue, exists := bodyStrings[key]
 				if !exists {
-					logDebug("      ✗ %s (key not found)", key)
+					logger.Debug("Body condition failed: key not found", "key", key)
 					bodyMatch = false
 					break
 				}
 				if !pattern.Matches(actualValue) {
-					logDebug("      ✗ %s=\"%s\" does not match %v", key, actualValue, pattern.Patterns)
+					logger.Debug("Body condition failed: pattern mismatch", "key", key, "value", actualValue, "patterns", pattern.Patterns)
 					bodyMatch = false
 					break
 				}
-				logDebug("      ✓ %s=\"%s\" matches %v", key, actualValue, pattern.Patterns)
+				logger.Debug("Body condition matched", "key", key, "value", actualValue, "patterns", pattern.Patterns)
 			}
 		}
 
 		if !bodyMatch {
-			logDebug("    Status: SKIPPED")
-			logDebug("")
+			logger.Debug("Operation skipped: body conditions not met", "index", i)
 			continue
 		}
 
@@ -98,27 +98,22 @@ func processOperations(data map[string]any, headers map[string]string, operation
 			for key, pattern := range op.MatchHeaders {
 				actualValue, exists := headers[key]
 				if !exists {
-					logDebug("      ✗ %s (header not found)", key)
+					logger.Debug("Header condition failed: header not found", "key", key)
 					headersMatch = false
 					break
 				}
 				if !pattern.Matches(actualValue) {
-					logDebug("      ✗ %s=\"%s\" does not match %v", key, actualValue, pattern.Patterns)
+					logger.Debug("Header condition failed: pattern mismatch", "key", key, "value", actualValue, "patterns", pattern.Patterns)
 					headersMatch = false
 					break
 				}
-				logDebug("      ✓ %s=\"%s\" (header)", key, actualValue)
+				logger.Debug("Header condition matched", "key", key, "value", actualValue)
 			}
 		}
 
 		if !headersMatch {
-			logDebug("    Status: SKIPPED")
-			logDebug("")
+			logger.Debug("Operation skipped: header conditions not met", "index", i)
 			continue
-		}
-
-		if hasConditions {
-			logDebug("")
 		}
 
 		// Capture values before for diff
@@ -163,25 +158,21 @@ func processOperations(data map[string]any, headers map[string]string, operation
 		if len(opChanges) > 0 {
 			anyApplied = true
 
-			logDebug("    Changes:")
 			for key, newValue := range opChanges {
 				if newValue == "<deleted>" {
-					logDebug("      - %s", key)
+					logger.Debug("Operation delete applied", "key", key)
 				} else if oldValue, existed := beforeValues[key]; existed {
-					logDebug("      ~ %s: %v -> %v", key, oldValue, newValue)
+					logger.Debug("Operation update applied", "key", key, "from", oldValue, "to", newValue)
 				} else {
-					logDebug("      + %s: %v", key, newValue)
+					logger.Debug("Operation add applied", "key", key, "value", newValue)
 				}
 			}
-			logDebug("")
 		} else if len(op.Default) > 0 || len(op.Merge) > 0 || len(op.Delete) > 0 {
-			logDebug("    No changes (all conditions already met)")
-			logDebug("")
+			logger.Debug("Operation produced no changes", "index", i)
 		}
 
 		if op.Stop {
-			logDebug("    Stop flag set - halting operation processing")
-			logDebug("")
+			logger.Debug("Operation stop flag set", "index", i)
 			break
 		}
 	}
@@ -219,7 +210,7 @@ var TemplateFuncs = template.FuncMap{
 	"toJson": func(v any) string {
 		b, err := json.Marshal(v)
 		if err != nil {
-			log.Printf("toJson error: %v", err)
+			logger.Error("toJson error", "err", err)
 			return "null"
 		}
 		return string(b)
@@ -280,14 +271,14 @@ var TemplateFuncs = template.FuncMap{
 	// Usage: {{ dict "key1" "value1" "key2" "value2" }}
 	"dict": func(pairs ...any) map[string]any {
 		if len(pairs)%2 != 0 {
-			log.Printf("dict: odd number of arguments")
+			logger.Error("dict helper called with odd number of arguments")
 			return map[string]any{}
 		}
 		result := make(map[string]any, len(pairs)/2)
 		for i := 0; i < len(pairs); i += 2 {
 			key, ok := pairs[i].(string)
 			if !ok {
-				log.Printf("dict: non-string key at position %d: %T", i, pairs[i])
+				logger.Error("dict helper received non-string key", "position", i, "type", fmt.Sprintf("%T", pairs[i]))
 				continue
 			}
 			result[key] = pairs[i+1]
@@ -333,24 +324,24 @@ func templateIndex(item any, indices ...any) any {
 		case []any:
 			i, ok := toInt(idx)
 			if !ok || i < 0 || i >= len(v) {
-				log.Printf("index: invalid array index %v for array of length %d", idx, len(v))
+				logger.Error("index helper: invalid array index", "index", idx, "length", len(v))
 				return nil
 			}
 			current = v[i]
 		case map[string]any:
 			key, ok := idx.(string)
 			if !ok {
-				log.Printf("index: non-string key %v for map", idx)
+				logger.Error("index helper: non-string key for map", "key", idx)
 				return nil
 			}
 			var exists bool
 			current, exists = v[key]
 			if !exists {
-				log.Printf("index: key %q not found in map", key)
+				logger.Error("index helper: key not found", "key", key)
 				return nil
 			}
 		default:
-			log.Printf("index: cannot index type %T", current)
+			logger.Error("index helper: unsupported type", "type", fmt.Sprintf("%T", current))
 			return nil
 		}
 	}
@@ -425,7 +416,7 @@ func checkKind(kind string, value any) bool {
 	case "nil":
 		return value == nil
 	default:
-		log.Printf("kindIs: unknown kind %q", kind)
+		logger.Error("kindIs helper: unknown kind", "kind", kind)
 		return false
 	}
 }
@@ -434,14 +425,14 @@ func checkKind(kind string, value any) bool {
 func ExecuteTemplate(tmpl *template.Template, input map[string]any, output map[string]any) bool {
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, input); err != nil {
-		log.Printf("Template execution error: %v", err)
+		logger.Error("Template execution error", "err", err)
 		return false
 	}
 
 	// Parse the template output as JSON
 	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		log.Printf("Template output is not valid JSON: %v\nOutput: %s", err, buf.String())
+		logger.Error("Template output is not valid JSON", "err", err, "output", buf.String())
 		return false
 	}
 

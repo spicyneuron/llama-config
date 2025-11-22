@@ -7,33 +7,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 
 	"github.com/spicyneuron/llama-config-proxy/config"
+	"github.com/spicyneuron/llama-config-proxy/logger"
 )
 
 type contextKey string
 
 const ruleContextKey contextKey = "matched_rule"
 
-var debugMode bool
-
-// SetDebugMode enables or disables debug logging
-func SetDebugMode(enabled bool) {
-	debugMode = enabled
-}
-
-func logDebug(format string, args ...any) {
-	if debugMode {
-		log.Printf("[DEBUG] "+format, args...)
-	}
-}
-
 // FindMatchingRules returns all rules that match the request sequentially
 func FindMatchingRules(req *http.Request, cfg *config.Config) []*config.Rule {
-	logDebug("Evaluating %d rules for %s %s", len(cfg.Rules), req.Method, req.URL.Path)
+	logger.Debug("Evaluating rules for request", "rule_count", len(cfg.Rules), "method", req.Method, "path", req.URL.Path)
 
 	var matchedRules []*config.Rule
 
@@ -42,19 +29,18 @@ func FindMatchingRules(req *http.Request, cfg *config.Config) []*config.Rule {
 		methodMatch := rule.Methods.Matches(req.Method)
 		pathMatch := rule.Paths.Matches(req.URL.Path)
 
-		logDebug("  Rule %d: methods=%v paths=%v (method_match=%v, path_match=%v)",
-			i, rule.Methods.Patterns, rule.Paths.Patterns, methodMatch, pathMatch)
+		logger.Debug("Rule evaluation", "index", i, "methods", rule.Methods.Patterns, "paths", rule.Paths.Patterns, "method_match", methodMatch, "path_match", pathMatch)
 
 		if methodMatch && pathMatch {
-			logDebug("  ✓ Rule %d matched!", i)
+			logger.Debug("Rule matched", "index", i)
 			matchedRules = append(matchedRules, rule)
 		}
 	}
 
 	if len(matchedRules) == 0 {
-		logDebug("  No rules matched")
+		logger.Debug("No rules matched for request")
 	} else {
-		logDebug("  Total matched rules: %d", len(matchedRules))
+		logger.Debug("Matched rules for request", "count", len(matchedRules))
 	}
 
 	return matchedRules
@@ -71,33 +57,25 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 		body, err = io.ReadAll(limitedBody)
 		req.Body.Close()
 		if err != nil {
-			log.Printf("Failed to read request body: %v", err)
+			logger.Error("Failed to read request body", "err", err)
 			return
 		}
 	}
 
-	if debugMode {
-		logDebug("========================================")
-		logDebug("Inbound Request: %s %s", req.Method, req.URL.Path)
-		logDebug("========================================")
+	if logger.IsDebug() {
+		logger.Debug("Inbound request", "method", req.Method, "path", req.URL.Path)
 
-		// Log headers
-		logDebug("Headers:")
 		for key, values := range req.Header {
 			for _, value := range values {
-				logDebug("  %s: %s", key, value)
+				logger.Debug("Request header", "key", key, "value", value)
 			}
 		}
 
-		// Log body if present
 		if len(body) > 0 {
 			var prettyJSON bytes.Buffer
 			json.Indent(&prettyJSON, body, "  ", "  ")
-			logDebug("")
-			logDebug("Body:")
-			logDebug("%s", prettyJSON.String())
+			logger.Debug("Request body", "body", prettyJSON.String())
 		}
-		logDebug("")
 	}
 
 	// Parse JSON body if present
@@ -107,7 +85,9 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 		if err := json.Unmarshal(body, &data); err == nil {
 			hasJSONBody = true
 		} else {
-			logDebug("Request body is not JSON, will pass through unchanged")
+			if logger.IsDebug() {
+				logger.Debug("Request body is not JSON, passing through unchanged")
+			}
 			req.Body = io.NopCloser(bytes.NewReader(body))
 			// Still check for matching rules that might modify path/headers
 		}
@@ -135,26 +115,13 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 		methodMatch := rule.Methods.Matches(req.Method)
 		pathMatch := rule.Paths.Matches(req.URL.Path)
 
-		if debugMode {
-			logDebug("Rule %d Evaluation", i)
-			logDebug("----------------------------------------")
-			if methodMatch {
-				logDebug("  Method: %s ✓ matches %v", req.Method, rule.Methods.Patterns)
-			} else {
-				logDebug("  Method: %s ✗ does not match %v", req.Method, rule.Methods.Patterns)
-			}
-			if pathMatch {
-				logDebug("  Path: %s ✓ matches %v", req.URL.Path, rule.Paths.Patterns)
-			} else {
-				logDebug("  Path: %s ✗ does not match %v", req.URL.Path, rule.Paths.Patterns)
-			}
-			logDebug("")
+		if logger.IsDebug() {
+			logger.Debug("Rule evaluation", "index", i, "method_match", methodMatch, "path_match", pathMatch, "methods", rule.Methods.Patterns, "paths", rule.Paths.Patterns)
 		}
 
 		if !methodMatch || !pathMatch {
-			if debugMode {
-				logDebug("  Rule %d: SKIPPED", i)
-				logDebug("")
+			if logger.IsDebug() {
+				logger.Debug("Rule skipped", "index", i)
 			}
 			continue
 		}
@@ -166,25 +133,22 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 		if rule.TargetPath != "" {
 			originalPath := req.URL.Path
 			req.URL.Path = rule.TargetPath
-			if debugMode {
-				logDebug("  Path rewrite: %s -> %s", originalPath, rule.TargetPath)
-				logDebug("")
+			if logger.IsDebug() {
+				logger.Debug("Path rewrite applied", "index", i, "from", originalPath, "to", rule.TargetPath)
 			}
 		}
 
 		// Skip body processing if no JSON body or no operations
 		if !hasJSONBody {
-			if debugMode {
-				logDebug("  No JSON body to process")
-				logDebug("")
+			if logger.IsDebug() {
+				logger.Debug("Rule has no JSON body to process", "index", i)
 			}
 			continue
 		}
 
 		if len(rule.OnRequest) == 0 {
-			if debugMode {
-				logDebug("  No on_request operations")
-				logDebug("")
+			if logger.IsDebug() {
+				logger.Debug("Rule has no on_request operations", "index", i)
 			}
 			continue
 		}
@@ -200,19 +164,17 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 			}
 		}
 
-		if debugMode {
+		if logger.IsDebug() {
 			if modified {
-				logDebug("  Rule %d: applied %d change(s)", i, len(appliedValues))
+				logger.Debug("Rule applied changes", "index", i, "change_count", len(appliedValues))
 			} else {
-				logDebug("  Rule %d: no changes applied", i)
+				logger.Debug("Rule made no changes", "index", i)
 			}
-			logDebug("")
 		}
 	}
 
-	if debugMode && matchedCount == 0 {
-		logDebug("No rules matched")
-		logDebug("")
+	if logger.IsDebug() && matchedCount == 0 {
+		logger.Debug("No rules matched request", "method", req.Method, "path", req.URL.Path)
 	}
 
 	// Store the last matching rule in context for response processing
@@ -225,7 +187,7 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 	if hasJSONBody {
 		modifiedBody, err := json.Marshal(data)
 		if err != nil {
-			log.Printf("Failed to marshal modified JSON: %v", err)
+			logger.Error("Failed to marshal modified request JSON", "err", err)
 			req.Body = io.NopCloser(bytes.NewReader(body))
 			return
 		}
@@ -233,33 +195,25 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 		req.Body = io.NopCloser(bytes.NewReader(modifiedBody))
 		req.ContentLength = int64(len(modifiedBody))
 
-		if anyModified && debugMode {
-			logDebug("========================================")
-			logDebug("Final Result")
-			logDebug("========================================")
-			logDebug("Changes applied:")
+		if anyModified && logger.IsDebug() {
+			logger.Debug("Request modifications applied", "changes", len(allAppliedValues))
 
-			// Show changes in diff format
 			for key, value := range allAppliedValues {
 				if value == "<deleted>" {
-					logDebug("  - %s", key)
+					logger.Debug("Request field deleted", "key", key)
 				} else {
-					// Check if it was a modification or addition
 					var originalData map[string]any
-					json.Unmarshal(body, &originalData)
+					_ = json.Unmarshal(body, &originalData)
 					if _, existed := originalData[key]; existed {
-						logDebug("  ~ %s: -> %v", key, value)
+						logger.Debug("Request field updated", "key", key, "value", value)
 					} else {
-						logDebug("  + %s: %v", key, value)
+						logger.Debug("Request field added", "key", key, "value", value)
 					}
 				}
 			}
 
-			logDebug("")
-			logDebug("Outbound body:")
 			finalBody, _ := json.MarshalIndent(data, "  ", "  ")
-			logDebug("%s", string(finalBody))
-			logDebug("")
+			logger.Debug("Outbound request body", "body", string(finalBody))
 		}
 	} else if len(body) > 0 {
 		// Restore original non-JSON body
@@ -270,30 +224,30 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 // ModifyResponse processes the response through matching rules
 func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 	contentType := resp.Header.Get("Content-Type")
-	logDebug("Processing response: status=%d, content-type=%s", resp.StatusCode, contentType)
+	logger.Debug("Processing response", "status", resp.StatusCode, "content_type", contentType)
 
 	// Get the rule from context
 	matchingRule, ok := resp.Request.Context().Value(ruleContextKey).(*config.Rule)
 	if !ok || matchingRule == nil {
-		logDebug("No matching rule in context for response")
+		logger.Debug("No matching rule in context for response")
 		return nil
 	}
 
 	// Skip if no response operations
 	if len(matchingRule.OnResponse) == 0 {
-		logDebug("No response operations defined for this rule")
+		logger.Debug("No response operations defined for this rule")
 		return nil
 	}
 
 	// Route to streaming handler if SSE
 	if strings.Contains(contentType, "text/event-stream") {
-		logDebug("Routing to streaming response handler")
+		logger.Debug("Routing to streaming response handler")
 		return ModifyStreamingResponse(resp, matchingRule)
 	}
 
 	// Skip if not JSON
 	if !strings.Contains(contentType, "application/json") {
-		logDebug("Skipping response modification (not JSON)")
+		logger.Debug("Skipping response modification (not JSON)")
 		return nil
 	}
 
@@ -305,28 +259,20 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 		return fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	if debugMode {
-		logDebug("========================================")
-		logDebug("Inbound Response: %d %s", resp.StatusCode, resp.Status)
-		logDebug("========================================")
+	if logger.IsDebug() {
+		logger.Debug("Inbound response", "status", resp.StatusCode, "status_text", resp.Status)
 
-		// Log headers
-		logDebug("Headers:")
 		for key, values := range resp.Header {
 			for _, value := range values {
-				logDebug("  %s: %s", key, value)
+				logger.Debug("Response header", "key", key, "value", value)
 			}
 		}
 
-		// Log body if present
 		if len(body) > 0 {
 			var prettyJSON bytes.Buffer
 			json.Indent(&prettyJSON, body, "  ", "  ")
-			logDebug("")
-			logDebug("Body:")
-			logDebug("%s", prettyJSON.String())
+			logger.Debug("Response body", "body", prettyJSON.String())
 		}
-		logDebug("")
 	}
 
 	var data map[string]any
@@ -344,10 +290,8 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 		}
 	}
 
-	if debugMode {
-		logDebug("Processing response operations")
-		logDebug("----------------------------------------")
-		logDebug("")
+	if logger.IsDebug() {
+		logger.Debug("Processing response operations")
 	}
 
 	modified, appliedValues := config.ProcessResponse(data, headers, matchingRule.OpRule)
@@ -361,31 +305,24 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 	resp.Body = io.NopCloser(bytes.NewReader(modifiedBody))
 	resp.ContentLength = int64(len(modifiedBody))
 
-	if modified && debugMode {
-		logDebug("========================================")
-		logDebug("Final Result")
-		logDebug("========================================")
-		logDebug("Changes applied:")
+	if modified && logger.IsDebug() {
+		logger.Debug("Response modifications applied", "changes", len(appliedValues))
 
-		// Show changes in diff format
 		var originalData map[string]any
-		json.Unmarshal(body, &originalData)
+		_ = json.Unmarshal(body, &originalData)
 
 		for key, value := range appliedValues {
 			if value == "<deleted>" {
-				logDebug("  - %s", key)
+				logger.Debug("Response field deleted", "key", key)
 			} else if _, existed := originalData[key]; existed {
-				logDebug("  ~ %s: -> %v", key, value)
+				logger.Debug("Response field updated", "key", key, "value", value)
 			} else {
-				logDebug("  + %s: %v", key, value)
+				logger.Debug("Response field added", "key", key, "value", value)
 			}
 		}
 
-		logDebug("")
-		logDebug("Outbound body:")
 		finalBody, _ := json.MarshalIndent(data, "  ", "  ")
-		logDebug("%s", string(finalBody))
-		logDebug("")
+		logger.Debug("Outbound response body", "body", string(finalBody))
 	}
 
 	return nil
@@ -407,7 +344,7 @@ func ModifyStreamingResponse(resp *http.Response, rule *config.Rule) error {
 
 		scanner := bufio.NewScanner(originalBody)
 		scanner.Buffer(make([]byte, 64*1024), 1024*1024) // 64KB initial, 1MB max line size
-		logDebug("Initialized streaming scanner (max line size: 1MB)")
+		logger.Debug("Initialized streaming scanner", "max_line_size", "1MB")
 
 		// Extract response headers for matching
 		headers := make(map[string]string)
@@ -422,15 +359,14 @@ func ModifyStreamingResponse(resp *http.Response, rule *config.Rule) error {
 			lineNum++
 			line := scanner.Text()
 
-			// Log every 10 lines to avoid spam
-			if lineNum%10 == 1 {
-				logDebug("Processing streaming line %d", lineNum)
+			if lineNum%10 == 1 && logger.IsDebug() {
+				logger.Debug("Processing streaming line", "line", lineNum)
 			}
 
 			// Empty lines are SSE delimiters - pass through
 			if line == "" {
 				if _, err := pipeWriter.Write([]byte("\n")); err != nil {
-					logDebug("Failed to write empty line: %v", err)
+					logger.Error("Failed to write empty streaming line", "err", err)
 					return
 				}
 				continue
@@ -448,7 +384,7 @@ func ModifyStreamingResponse(resp *http.Response, rule *config.Rule) error {
 				// Handle [DONE] marker
 				if jsonStr == "[DONE]" {
 					if _, err := pipeWriter.Write([]byte(line + "\n")); err != nil {
-						logDebug("Failed to write [DONE]: %v", err)
+						logger.Error("Failed to write streaming [DONE] marker", "err", err)
 					}
 					continue
 				}
@@ -464,7 +400,7 @@ func ModifyStreamingResponse(resp *http.Response, rule *config.Rule) error {
 			if err := json.Unmarshal(jsonData, &data); err != nil {
 				// Not JSON, pass through unchanged
 				if _, err := pipeWriter.Write([]byte(line + "\n")); err != nil {
-					logDebug("Failed to write non-JSON line: %v", err)
+					logger.Error("Failed to write non-JSON streaming line", "err", err)
 				}
 				continue
 			}
@@ -472,16 +408,15 @@ func ModifyStreamingResponse(resp *http.Response, rule *config.Rule) error {
 			// Apply response transformations
 			modified, appliedValues := config.ProcessResponse(data, headers, rule.OpRule)
 
-			if debugMode && modified {
+			if logger.IsDebug() && modified {
 				appliedJSON, _ := json.MarshalIndent(appliedValues, "", "  ")
-				logDebug("Applied streaming chunk transformation (line %d):\n%s", lineNum, string(appliedJSON))
+				logger.Debug("Applied streaming chunk transformation", "line", lineNum, "changes", string(appliedJSON))
 			}
 
 			// Marshal back to JSON
 			modifiedJSON, err := json.Marshal(data)
 			if err != nil {
-				logDebug("Failed to marshal modified chunk: %v", err)
-				// Write original on error
+				logger.Error("Failed to marshal modified streaming chunk", "err", err)
 				if _, err := pipeWriter.Write([]byte(line + "\n")); err != nil {
 					return
 				}
@@ -503,7 +438,7 @@ func ModifyStreamingResponse(resp *http.Response, rule *config.Rule) error {
 		}
 
 		if err := scanner.Err(); err != nil {
-			logDebug("Scanner error: %v", err)
+			logger.Error("Streaming scanner error", "err", err)
 			pipeWriter.CloseWithError(err)
 		}
 	}()

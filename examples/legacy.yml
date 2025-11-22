@@ -1,0 +1,8 @@
+# Converted legacy config using the new syntax with namespaced rules
+proxy:
+  - listen: "localhost:9997"
+    target: "http://server.llama:8000"
+    timeout: 5m
+    rules:
+      - include: rules-legacy-chat.yml
+      - include: rules-legacy-infill.yml

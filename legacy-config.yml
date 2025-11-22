@@ -1,0 +1,138 @@
+# Proxy Configuration
+proxy:
+  target: "http://server.llama:8000"
+  timeout: 5m
+
+# Request Rules
+rules:
+  - methods: POST
+
+    # Handles LMStudio path, so we can use Cline's minimal prompt
+    paths: .*/chat/completions
+    target_path: /v1/chat/completions
+
+    operations:
+      #
+      # Overrides
+      #
+
+      - merge:
+          max_tokens: 1000000
+
+      #
+      # Aliases
+      #
+
+      - filters:
+          model: ^(default|write|cli|code)$
+        merge:
+          model: 357-glm4.6
+
+      - filters:
+          model: ^(vision|utility|translate)$
+        merge:
+          model: 030-qwen3-vl-instruct
+
+      - filters:
+          model: massive
+        merge:
+          model: 671-deepseek3.1
+
+      #
+      # Model Families
+      #
+
+      - filters:
+          model: deepseek
+        merge:
+          temperature: 0.6
+          top_p: 0.95
+          min_p: 0
+
+      - filters:
+          model: gemma3
+        merge:
+          temperature: 1
+          top_k: 64
+          top_p: 0.95
+          min_p: 0
+        stop: true
+
+      - filters:
+          model: glm4.6|minimax-m2
+        merge:
+          temperature: 1
+          top_k: 40
+          top_p: 0.95
+          min_p: 0
+        stop: true
+
+      - filters:
+          model: glm4.5
+        merge:
+          temperature: 0.6
+          top_p: 1
+        stop: true
+
+      - filters:
+          model: gpt|jinx
+        merge:
+          temperature: 1
+          top_k: 0
+          top_p: 1
+          min_p: 0
+        stop: true
+
+      - filters:
+          model: qwen3-code
+        merge:
+          temperature: 0.7
+          top_k: 20
+          top_p: 0.8
+          min_p: 0
+          repeat_penalty: 1.05
+        stop: true
+
+      - filters:
+          model: qwen3-vl-instruct
+        merge:
+          temperature: 0.7
+          top_k: 20
+          top_p: 0.8
+          min_p: 0
+          presence_penalty: 1.5
+        stop: true
+
+      - filters:
+          model: qwen3-instruct|intern3\.5
+        merge:
+          temperature: 0.7
+          top_k: 20
+          top_p: 0.8
+          min_p: 0
+        stop: true
+
+      - filters:
+          model: qwen3-think
+        merge:
+          temperature: 0.6
+          top_k: 20
+          top_p: 0.95
+          min_p: 0
+        stop: true
+
+  #
+  # Code FIM
+  #
+
+  - methods: POST
+    paths: .*/infill
+    target_path: /upstream/030-qwen3-code/infill
+
+    operations:
+      - merge:
+          temperature: 0.7
+          top_k: 20
+          top_p: 0.8
+          min_p: 0
+          repeat_penalty: 1.05
