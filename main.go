@@ -131,7 +131,7 @@ func main() {
 			return proxy.ModifyResponse(resp, proxyConfigForHandlers)
 		}
 
-		server := createServer(proxyCfg, reverseProxy)
+		server := CreateServer(proxyCfg, reverseProxy)
 
 		go func(p config.ProxyConfig, srv *http.Server) {
 			if p.SSLCert != "" && p.SSLKey != "" {
@@ -147,7 +147,7 @@ func main() {
 	logger.Fatal("Proxy server failed", "err", <-errCh)
 }
 
-func createServer(cfg config.ProxyConfig, handler http.Handler) *http.Server {
+func CreateServer(cfg config.ProxyConfig, handler http.Handler) *http.Server {
 	server := &http.Server{
 		Addr:    cfg.Listen,
 		Handler: handler,
@@ -163,8 +163,9 @@ func createServer(cfg config.ProxyConfig, handler http.Handler) *http.Server {
 		}
 	}
 
-	server.ReadTimeout = cfg.Timeout
-	server.WriteTimeout = cfg.Timeout
+	if cfg.Timeout > 0 {
+		server.IdleTimeout = cfg.Timeout
+	}
 
 	return server
 }
