@@ -153,6 +153,7 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, error) {
 	}
 
 	var mergedConfig *Config
+	logger.Info("Loading configuration", "files", len(configPaths))
 
 	for i, configPath := range configPaths {
 		cfg, err := loadConfigFile(configPath)
@@ -219,7 +220,7 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, error) {
 
 	mergedConfig.Proxies = proxies
 
-	logger.Debug("Applied CLI overrides", "listen", overrides.Listen, "target", overrides.Target, "timeout", overrides.Timeout, "debug", overrides.Debug)
+	logger.Info("Applied CLI overrides", "listen", overrides.Listen, "target", overrides.Target, "timeout", overrides.Timeout, "debug", overrides.Debug)
 
 	if err := Validate(mergedConfig); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)
@@ -229,7 +230,11 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, error) {
 		return nil, fmt.Errorf("template compilation failed: %w", err)
 	}
 
-	logger.Debug("Successfully compiled rules", "proxies", len(mergedConfig.Proxies))
+	for i, p := range mergedConfig.Proxies {
+		logger.Info("Proxy configured", "index", i, "listen", p.Listen, "target", p.Target, "rules", len(p.Rules), "timeout", p.Timeout, "ssl_cert", p.SSLCert != "")
+	}
+
+	logger.Info("Configuration ready", "proxies", len(mergedConfig.Proxies), "total_rules", len(mergedConfig.Rules))
 
 	return mergedConfig, nil
 }
