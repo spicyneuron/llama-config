@@ -18,6 +18,11 @@ type contextKey string
 
 const ruleContextKey contextKey = "matched_rule"
 
+type responseRuleContext struct {
+	rule  *config.Rule
+	index int
+}
+
 // FindMatchingRules returns all rules that match the request sequentially
 func FindMatchingRules(req *http.Request, cfg *config.Config) []*config.Rule {
 	logger.Debug("Evaluating rules for request", "rule_count", len(cfg.Rules), "method", req.Method, "path", req.URL.Path)
@@ -103,10 +108,11 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 	}
 
 	// Track the last matched rule for response processing
-	var lastMatchedRule *config.Rule
+	var lastMatchedRule responseRuleContext
 	anyModified := false
 	allAppliedValues := make(map[string]any)
 	matchedCount := 0
+	var matchedRuleIndices []int
 
 	// Process rules sequentially: check and apply each rule before moving to next
 	for i := range cfg.Rules {
@@ -128,7 +134,8 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 		}
 
 		matchedCount++
-		lastMatchedRule = rule
+		lastMatchedRule = responseRuleContext{rule: rule, index: i}
+		matchedRuleIndices = append(matchedRuleIndices, i)
 
 		// Handle target path rewriting
 		if rule.TargetPath != "" {
@@ -179,8 +186,8 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 	}
 
 	// Store the last matching rule in context for response processing
-	if lastMatchedRule != nil {
-		ctx := context.WithValue(req.Context(), ruleContextKey, lastMatchedRule)
+	if lastMatchedRule.rule != nil {
+		ctx := context.WithValue(req.Context(), ruleContextKey, &lastMatchedRule)
 		*req = *req.WithContext(ctx)
 	}
 
@@ -211,6 +218,12 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 						logger.Debug("Request field added", "key", key, "value", value)
 					}
 				}
+
+				if matchedCount > 0 {
+					logger.Info("Request rule summary", "method", req.Method, "path", req.URL.Path, "matched_rules", matchedRuleIndices, "changes", len(allAppliedValues))
+				} else {
+					logger.Info("Request matched no rules", "method", req.Method, "path", req.URL.Path)
+				}
 			}
 
 			finalBody, _ := json.MarshalIndent(data, "  ", "  ")
@@ -230,14 +243,24 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 	logger.Debug("Processing response", "status", resp.StatusCode, "content_type", contentType)
 
 	// Get the rule from context (may be nil)
-	matchingRule, _ := resp.Request.Context().Value(ruleContextKey).(*config.Rule)
+	var matchingRule *config.Rule
+	ruleIndex := -1
+	switch v := resp.Request.Context().Value(ruleContextKey).(type) {
+	case *responseRuleContext:
+		if v != nil {
+			matchingRule = v.rule
+			ruleIndex = v.index
+		}
+	case *config.Rule:
+		matchingRule = v
+	}
 
 	// Route to streaming handler if SSE (log events even without on_response operations)
 	if strings.Contains(contentType, "text/event-stream") {
 		if matchingRule == nil || len(matchingRule.OnResponse) == 0 {
 			logger.Info("Streaming response (no on_response operations)", "method", method, "path", path, "status", resp.StatusCode, "content_type", contentType)
 		} else {
-			logger.Info("Streaming response with transformations", "method", method, "path", path, "status", resp.StatusCode, "content_type", contentType)
+			logger.Info("Streaming response with transformations", "method", method, "path", path, "status", resp.StatusCode, "content_type", contentType, "rule_index", ruleIndex)
 		}
 		if logger.IsDebug() {
 			for key, values := range sanitizeHeaders(resp.Header) {
@@ -329,9 +352,9 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 	resp.ContentLength = int64(len(modifiedBody))
 
 	if modified {
-		logger.Info("Response transformed", "method", method, "path", path, "status", resp.StatusCode, "changes", len(appliedValues))
+		logger.Info("Response transformed", "method", method, "path", path, "status", resp.StatusCode, "changes", len(appliedValues), "rule_index", ruleIndex)
 	} else {
-		logger.Info("Response unchanged after on_response", "method", method, "path", path, "status", resp.StatusCode)
+		logger.Info("Response unchanged after on_response", "method", method, "path", path, "status", resp.StatusCode, "rule_index", ruleIndex)
 	}
 
 	if modified && logger.IsDebug() {
