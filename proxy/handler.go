@@ -229,33 +229,24 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 	contentType := resp.Header.Get("Content-Type")
 	logger.Debug("Processing response", "status", resp.StatusCode, "content_type", contentType)
 
-	// Get the rule from context
-	matchingRule, ok := resp.Request.Context().Value(ruleContextKey).(*config.Rule)
-	if !ok || matchingRule == nil {
-		logger.Info("Response skipped: no matching rule", "method", method, "path", path, "status", resp.StatusCode, "content_type", contentType)
-		logger.Debug("No matching rule in context for response")
-		return nil
-	}
+	// Get the rule from context (may be nil)
+	matchingRule, _ := resp.Request.Context().Value(ruleContextKey).(*config.Rule)
 
-	// Skip if no response operations
-	if len(matchingRule.OnResponse) == 0 {
-		logger.Info("Response skipped: no on_response operations", "method", method, "path", path, "status", resp.StatusCode, "content_type", contentType)
-		logger.Debug("No response operations defined for this rule")
-		return nil
-	}
-
-	// Route to streaming handler if SSE
+	// Route to streaming handler if SSE (log events even without on_response operations)
 	if strings.Contains(contentType, "text/event-stream") {
-		logger.Info("Response streaming passthrough", "method", method, "path", path, "status", resp.StatusCode, "content_type", contentType)
-		logger.Debug("Routing to streaming response handler")
+		if matchingRule == nil || len(matchingRule.OnResponse) == 0 {
+			logger.Info("Streaming response (no on_response operations)", "method", method, "path", path, "status", resp.StatusCode, "content_type", contentType)
+		} else {
+			logger.Info("Streaming response with transformations", "method", method, "path", path, "status", resp.StatusCode, "content_type", contentType)
+		}
+		if logger.IsDebug() {
+			for key, values := range sanitizeHeaders(resp.Header) {
+				for _, value := range values {
+					logger.Debug("Streaming response header", "key", key, "value", value)
+				}
+			}
+		}
 		return ModifyStreamingResponse(resp, matchingRule)
-	}
-
-	// Skip if not JSON
-	if !strings.Contains(contentType, "application/json") {
-		logger.Info("Response skipped: non-JSON content type", "method", method, "path", path, "status", resp.StatusCode, "content_type", contentType)
-		logger.Debug("Skipping response modification (not JSON)")
-		return nil
 	}
 
 	// Read response body (limit to 10MB)
@@ -281,6 +272,30 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 		} else {
 			logger.Debug("Response body omitted", "reason", "empty")
 		}
+	}
+
+	// Restore body for downstream use
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	resp.ContentLength = int64(len(body))
+
+	if matchingRule == nil {
+		logger.Info("Response skipped: no matching rule", "method", method, "path", path, "status", resp.StatusCode, "content_type", contentType)
+		logger.Debug("No matching rule in context for response")
+		return nil
+	}
+
+	// Skip if no response operations
+	if len(matchingRule.OnResponse) == 0 {
+		logger.Info("Response skipped: no on_response operations", "method", method, "path", path, "status", resp.StatusCode, "content_type", contentType)
+		logger.Debug("No response operations defined for this rule")
+		return nil
+	}
+
+	// Skip if not JSON
+	if !strings.Contains(contentType, "application/json") {
+		logger.Info("Response skipped: non-JSON content type", "method", method, "path", path, "status", resp.StatusCode, "content_type", contentType)
+		logger.Debug("Skipping response modification (not JSON)")
+		return nil
 	}
 
 	var data map[string]any
@@ -344,6 +359,9 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 
 // ModifyStreamingResponse processes Server-Sent Events (SSE) line-by-line
 func ModifyStreamingResponse(resp *http.Response, rule *config.Rule) error {
+	method := resp.Request.Method
+	path := resp.Request.URL.Path
+
 	// Create a pipe for streaming transformation
 	pipeReader, pipeWriter := io.Pipe()
 	originalBody := resp.Body
@@ -358,6 +376,7 @@ func ModifyStreamingResponse(resp *http.Response, rule *config.Rule) error {
 
 		scanner := bufio.NewScanner(originalBody)
 		scanner.Buffer(make([]byte, 64*1024), 1024*1024) // 64KB initial, 1MB max line size
+		logger.Info("Streaming response start", "method", method, "path", path)
 		logger.Debug("Initialized streaming scanner", "max_line_size", "1MB")
 
 		// Extract response headers for matching
@@ -373,8 +392,15 @@ func ModifyStreamingResponse(resp *http.Response, rule *config.Rule) error {
 			lineNum++
 			line := scanner.Text()
 
-			if lineNum%10 == 1 && logger.IsDebug() {
-				logger.Debug("Processing streaming line", "line", lineNum)
+			if logger.IsDebug() {
+				safeLine, truncated := sanitizeBody([]byte(line), 4096)
+				logger.Debug("Streaming event received", "line", lineNum, "body", safeLine, "truncated", truncated)
+			}
+
+			if lineNum == 1 && logger.IsDebug() {
+				logger.Debug("Streaming first line", "line", lineNum)
+			} else if lineNum%50 == 0 && logger.IsDebug() {
+				logger.Debug("Streaming heartbeat", "line", lineNum)
 			}
 
 			// Empty lines are SSE delimiters - pass through
@@ -420,7 +446,11 @@ func ModifyStreamingResponse(resp *http.Response, rule *config.Rule) error {
 			}
 
 			// Apply response transformations
-			modified, appliedValues := config.ProcessResponse(data, headers, rule.OpRule)
+			modified := false
+			var appliedValues map[string]any
+			if rule != nil && len(rule.OnResponse) > 0 && rule.OpRule != nil {
+				modified, appliedValues = config.ProcessResponse(data, headers, rule.OpRule)
+			}
 
 			if logger.IsDebug() && modified {
 				appliedJSON, _ := json.MarshalIndent(appliedValues, "", "  ")
