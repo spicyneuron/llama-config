@@ -39,7 +39,7 @@ func TestProcessOperationsMatchHeadersDeleteAndStop(t *testing.T) {
 		"remove_me": "y",
 	}
 
-	modified, applied := processOperations(body, headers, ops, nil)
+	modified, applied := processOperations("test", body, headers, 0, "", "", ops, nil)
 	if !modified {
 		t.Fatal("expected modifications to be applied")
 	}
@@ -85,7 +85,7 @@ func TestProcessResponseHeaderFilter(t *testing.T) {
 	headers := map[string]string{"Content-Type": "application/json"}
 	body := map[string]any{"message": "hi"}
 
-	modified, applied := ProcessResponse(body, headers, compiled)
+	modified, applied := ProcessResponse(body, headers, compiled, 0, "", "")
 	if !modified {
 		t.Fatal("expected response to be modified")
 	}
@@ -99,7 +99,7 @@ func TestProcessResponseHeaderFilter(t *testing.T) {
 	// Negative header match should no-op
 	headers["Content-Type"] = "text/plain"
 	body = map[string]any{"message": "hi"}
-	modified, _ = ProcessResponse(body, headers, compiled)
+	modified, _ = ProcessResponse(body, headers, compiled, 0, "", "")
 	if modified {
 		t.Fatal("expected no modification for non-matching headers")
 	}
@@ -110,7 +110,7 @@ func TestProcessResponseHeaderFilter(t *testing.T) {
 	// Sanity: ensure Matches ignores header casing
 	headers = map[string]string{"Content-Type": "Application/Json"}
 	body = map[string]any{"message": "hi"}
-	if modified, _ := ProcessResponse(body, headers, compiled); !modified {
+	if modified, _ := ProcessResponse(body, headers, compiled, 0, "", ""); !modified {
 		t.Fatal("expected case-insensitive header match to modify response")
 	}
 	if body["tag"] != "processed" {

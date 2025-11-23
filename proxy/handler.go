@@ -54,6 +54,8 @@ func FindMatchingRules(req *http.Request, cfg *config.Config) []*config.Rule {
 // ModifyRequest processes the request through rules sequentially
 // Each rule is checked and processed immediately before moving to the next rule
 func ModifyRequest(req *http.Request, cfg *config.Config) {
+	method := req.Method
+	path := req.URL.Path
 	// Read and limit body size to 10MB to prevent memory exhaustion
 	var body []byte
 	var err error
@@ -62,13 +64,13 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 		body, err = io.ReadAll(limitedBody)
 		req.Body.Close()
 		if err != nil {
-			logger.Error("Failed to read request body", "err", err)
+			logger.Error("Failed to read request body", "method", method, "path", path, "err", err)
 			return
 		}
 	}
 
 	if logger.IsDebug() {
-		logger.Debug("Inbound request", "method", req.Method, "path", req.URL.Path)
+		logger.Debug("Inbound request", "method", method, "path", path)
 
 		for key, values := range sanitizeHeaders(req.Header) {
 			for _, value := range values {
@@ -162,7 +164,7 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 		}
 
 		// Apply operations to the current (possibly modified) data
-		modified, appliedValues := config.ProcessRequest(data, headers, rule.OpRule, i)
+		modified, appliedValues := config.ProcessRequest(data, headers, rule.OpRule, i, method, path)
 
 		if modified {
 			anyModified = true
@@ -195,7 +197,7 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 	if hasJSONBody {
 		modifiedBody, err := json.Marshal(data)
 		if err != nil {
-			logger.Error("Failed to marshal modified request JSON", "err", err)
+			logger.Error("Failed to marshal modified request JSON", "method", method, "path", path, "err", err)
 			req.Body = io.NopCloser(bytes.NewReader(body))
 			return
 		}
@@ -269,7 +271,7 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 				}
 			}
 		}
-		return ModifyStreamingResponse(resp, matchingRule)
+		return ModifyStreamingResponse(resp, matchingRule, ruleIndex)
 	}
 
 	// Read response body (limit to 10MB)
@@ -340,7 +342,7 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 		logger.Debug("Processing response operations")
 	}
 
-	modified, appliedValues := config.ProcessResponse(data, headers, matchingRule.OpRule)
+	modified, appliedValues := config.ProcessResponse(data, headers, matchingRule.OpRule, ruleIndex, method, path)
 
 	modifiedBody, err := json.Marshal(data)
 	if err != nil {
@@ -381,7 +383,7 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 }
 
 // ModifyStreamingResponse processes Server-Sent Events (SSE) line-by-line
-func ModifyStreamingResponse(resp *http.Response, rule *config.Rule) error {
+func ModifyStreamingResponse(resp *http.Response, rule *config.Rule, ruleIndex int) error {
 	method := resp.Request.Method
 	path := resp.Request.URL.Path
 
@@ -472,7 +474,7 @@ func ModifyStreamingResponse(resp *http.Response, rule *config.Rule) error {
 			modified := false
 			var appliedValues map[string]any
 			if rule != nil && len(rule.OnResponse) > 0 && rule.OpRule != nil {
-				modified, appliedValues = config.ProcessResponse(data, headers, rule.OpRule)
+				modified, appliedValues = config.ProcessResponse(data, headers, rule.OpRule, ruleIndex, method, path)
 			}
 
 			if logger.IsDebug() && modified {

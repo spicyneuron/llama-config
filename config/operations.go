@@ -42,17 +42,17 @@ func toStringMap(data map[string]any) map[string]string {
 }
 
 // ProcessRequest applies all request operations to data
-func ProcessRequest(data map[string]any, headers map[string]string, rule *CompiledRule, ruleIndex int) (bool, map[string]any) {
-	return processOperations(data, headers, rule.OnRequest, rule.OnRequestTemplates)
+func ProcessRequest(data map[string]any, headers map[string]string, rule *CompiledRule, ruleIndex int, method, path string) (bool, map[string]any) {
+	return processOperations("request", data, headers, ruleIndex, method, path, rule.OnRequest, rule.OnRequestTemplates)
 }
 
 // ProcessResponse applies all response operations to data
-func ProcessResponse(data map[string]any, headers map[string]string, rule *CompiledRule) (bool, map[string]any) {
-	return processOperations(data, headers, rule.OnResponse, rule.OnResponseTemplates)
+func ProcessResponse(data map[string]any, headers map[string]string, rule *CompiledRule, ruleIndex int, method, path string) (bool, map[string]any) {
+	return processOperations("response", data, headers, ruleIndex, method, path, rule.OnResponse, rule.OnResponseTemplates)
 }
 
 // processOperations applies operations to data with their compiled templates
-func processOperations(data map[string]any, headers map[string]string, operations []OperationExec, templates []*template.Template) (bool, map[string]any) {
+func processOperations(phase string, data map[string]any, headers map[string]string, ruleIndex int, method, path string, operations []OperationExec, templates []*template.Template) (bool, map[string]any) {
 	appliedValues := make(map[string]any)
 	anyApplied := false
 
@@ -127,7 +127,7 @@ func processOperations(data map[string]any, headers map[string]string, operation
 
 		// Execute template if present
 		if op.Template != "" && templates[i] != nil {
-			if ExecuteTemplate(templates[i], data, data) {
+			if ExecuteTemplate(templates[i], data, data, phase, ruleIndex, i, method, path) {
 				maps.Copy(appliedValues, data)
 				maps.Copy(opChanges, data)
 				anyApplied = true
@@ -422,17 +422,17 @@ func checkKind(kind string, value any) bool {
 }
 
 // ExecuteTemplate applies a template to input data and updates output
-func ExecuteTemplate(tmpl *template.Template, input map[string]any, output map[string]any) bool {
+func ExecuteTemplate(tmpl *template.Template, input map[string]any, output map[string]any, phase string, ruleIndex, opIndex int, method, path string) bool {
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, input); err != nil {
-		logger.Error("Template execution error", "err", err)
+		logger.Error("Template execution error", "phase", phase, "rule_index", ruleIndex, "op_index", opIndex, "method", method, "path", path, "err", err)
 		return false
 	}
 
 	// Parse the template output as JSON
 	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		logger.Error("Template output is not valid JSON", "err", err, "output", buf.String())
+		logger.Error("Template output is not valid JSON", "phase", phase, "rule_index", ruleIndex, "op_index", opIndex, "method", method, "path", path, "err", err, "output", buf.String())
 		return false
 	}
 
