@@ -1,26 +1,26 @@
 # Example OpenAI-compatible chat completions proxy
 
 proxy:
-  - listen: localhost:8081               # Where the proxy listens
-    target: http://localhost:8080        # Upstream (llama.cpp/LM Studio/anything OpenAI-like)
-    timeout: 60s                         # Per-request timeout
+  - listen: localhost:8081 # Where the proxy listens
+    target: http://localhost:8080 # Upstream (llama.cpp/LM Studio/anything OpenAI-like)
+    timeout: 60s # Per-request timeout
     # ssl_cert: "cert.pem"               # Enable both ssl_cert and ssl_key to serve HTTPS
     # ssl_key: "key.pem"
 
     rules:
       - methods: POST
-        paths: ^/v1/chat/completions$    # Match the standard chat endpoint
+        paths: ^/v1/chat/completions$ # Match the standard chat endpoint
         # target_path: /api/chat         # Uncomment to rewrite to a different upstream path
 
         on_request:
           - default:
-              model: gemma3              # Set defaults if the client omits a parameter
+              model: gemma3 # Set defaults if the client omits a parameter
               temperature: 0.7
           - merge:
-              max_tokens: 512            # Set or override a parameter
+              max_tokens: 512 # Set or override a parameter
           - delete:
-              - debug                    # Strip client-provided parameters
+              - debug # Strip client-provided parameters
 
         on_response:
           - merge:
-              served_by: llama-config-proxy
+              served_by: llama-matchmaker

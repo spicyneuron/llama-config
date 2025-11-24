@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/spicyneuron/llama-config-proxy/config"
+	"github.com/spicyneuron/llama-matchmaker/config"
 )
 
 func mustParseURL(rawURL string) *url.URL {

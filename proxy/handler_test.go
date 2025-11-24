@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/spicyneuron/llama-config-proxy/config"
+	"github.com/spicyneuron/llama-matchmaker/config"
 )
 
 func TestModifyRequestWithNilBody(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 
-	"github.com/spicyneuron/llama-config-proxy/config"
+	"github.com/spicyneuron/llama-matchmaker/config"
 )
 
 type fakeWatcher struct {

@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"testing"
 
-	"github.com/spicyneuron/llama-config-proxy/config"
+	"github.com/spicyneuron/llama-matchmaker/config"
 )
 
 func newPatternField(patterns ...string) config.PatternField {

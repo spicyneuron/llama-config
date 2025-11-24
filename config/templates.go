@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"text/template"
 
-	"github.com/spicyneuron/llama-config-proxy/logger"
+	"github.com/spicyneuron/llama-matchmaker/logger"
 )
 
 // CompileTemplates compiles all template strings in rules

@@ -10,8 +10,8 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/spicyneuron/llama-config-proxy/config"
-	"github.com/spicyneuron/llama-config-proxy/proxy"
+	"github.com/spicyneuron/llama-matchmaker/config"
+	"github.com/spicyneuron/llama-matchmaker/proxy"
 )
 
 func TestEndToEndRequestModification(t *testing.T) {
@@ -157,7 +157,7 @@ func TestEndToEndResponseModification(t *testing.T) {
 				OnResponse: []config.Operation{
 					{
 						Merge: map[string]any{
-							"processed_by": "llama-config-proxy",
+							"processed_by": "llama-matchmaker",
 						},
 					},
 				},
@@ -217,7 +217,7 @@ func TestEndToEndResponseModification(t *testing.T) {
 	}
 
 	// Verify response modification was applied
-	if processed, ok := response["processed_by"].(string); !ok || processed != "llama-config-proxy" {
+	if processed, ok := response["processed_by"].(string); !ok || processed != "llama-matchmaker" {
 		t.Errorf("Expected processed_by field, got %v", response["processed_by"])
 	}
 

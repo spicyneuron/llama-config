@@ -1,28 +1,32 @@
-# Llama Config Proxy
+# Llama Matchmaker
 
 Managing multiple local LLMs can be a pain. Each model has different optimal parameters, and each client needs to be individually reconfigured when new models drop.
 
-This lightweight proxy sits between your LLM clients and servers, automatically transforming each request with model-specific logic.
+Llama Matchmaker is a lightweight proxy that sits between your LLM clients and servers, automatically matching each request with model or situation-specific options. It's the single place to configure all your LLMs.
+
+Designed with amazing projects like [llama-swap](https://github.com/mostlygeek/llama-swap), [llama.cpp server](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md), and [mlx-lm](https://github.com/ml-explore/mlx-lm/) in mind.
 
 ## What It Does
 
-- Sits in front of your LLM backends and rewrites requests/responses using declarative YAML rules.
-- Can match on methods, paths, headers, and JSON request body parameters.
-- Can rewrite request paths, apply defaults, update/delete fields, and render custom JSON via templates.
-- Hot-reloads when configs change.
-- Works with SSL or plain HTTP.
+- Sits in front of your LLM backend(s) and rewrites requests using declarative YAML rules.
+- Can match on methods, paths, headers, and JSON body parameters.
+- Can rewrite request paths, apply defaults, update/delete fields, and even render custom JSON via go templates.
+- Automatic hot-reloads when configs change.
+- Works with SSL and plain HTTP.
 
 ## Quickstart
 
 ```sh
 # Install to $GOPATH/bin
-go install github.com/spicyneuron/llama-config-proxy@latest
+go install github.com/spicyneuron/llama-matchmaker@latest
 
-# Grab the single example config
-curl -L -o example.config.yml https://raw.githubusercontent.com/spicyneuron/llama-config-proxy/main/examples/example.config.yml
+# Grab and edit the example config
+curl -L -o example.config.yml https://raw.githubusercontent.com/spicyneuron/llama-matchmaker/main/examples/example.config.yml
 
-# Start with the example config (point it at your backend target)
-llama-config-proxy --config example.config.yml
+# Start the proxy
+llama-matchmaker --config example.config.yml
+
+# Configure your clients to point at http://localhost:8081
 ```
 
 ## Configuration & Behavior

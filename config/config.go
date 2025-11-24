@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spicyneuron/llama-config-proxy/logger"
+	"github.com/spicyneuron/llama-matchmaker/logger"
 	"gopkg.in/yaml.v3"
 )
 

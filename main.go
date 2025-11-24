@@ -16,9 +16,9 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/spicyneuron/llama-config-proxy/config"
-	"github.com/spicyneuron/llama-config-proxy/logger"
-	"github.com/spicyneuron/llama-config-proxy/proxy"
+	"github.com/spicyneuron/llama-matchmaker/config"
+	"github.com/spicyneuron/llama-matchmaker/logger"
+	"github.com/spicyneuron/llama-matchmaker/proxy"
 )
 
 // configFiles allows multiple -config flags
@@ -98,14 +98,14 @@ func main() {
 	flag.Var(&configPaths, "config", "Path to YAML configuration (can be specified multiple times)")
 
 	flag.Usage = func() {
-		fmt.Println("llama-config-proxy: Automatically apply optimal settings to LLM requests")
+		fmt.Println("llama-matchmaker: Automatically apply optimal settings to LLM requests")
 		fmt.Println()
-		fmt.Println("Usage: llama-config-proxy -config <config.yml> [-config <rules.yml> ...]")
+		fmt.Println("Usage: llama-matchmaker -config <config.yml> [-config <rules.yml> ...]")
 		fmt.Println()
 		flag.PrintDefaults()
 		fmt.Println()
 		fmt.Println("For more information and examples, visit:")
-		fmt.Println("  https://github.com/spicyneuron/llama-config-proxy")
+		fmt.Println("  https://github.com/spicyneuron/llama-matchmaker")
 	}
 
 	flag.Parse()

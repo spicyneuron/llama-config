@@ -1,4 +1,4 @@
-module github.com/spicyneuron/llama-config-proxy
+module github.com/spicyneuron/llama-matchmaker
 
 go 1.25.0
 

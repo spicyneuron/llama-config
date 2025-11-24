@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/spicyneuron/llama-config-proxy/config"
-	"github.com/spicyneuron/llama-config-proxy/logger"
+	"github.com/spicyneuron/llama-matchmaker/config"
+	"github.com/spicyneuron/llama-matchmaker/logger"
 )
 
 type contextKey string

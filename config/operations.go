@@ -10,7 +10,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/spicyneuron/llama-config-proxy/logger"
+	"github.com/spicyneuron/llama-matchmaker/logger"
 )
 
 // CompiledRule holds a rule with compiled templates
