@@ -35,77 +35,6 @@ func TestFixturesValidJSON(t *testing.T) {
 	}
 }
 
-// TestOllamaChatFixtures validates Ollama chat request/response structure
-func TestOllamaChatFixtures(t *testing.T) {
-	tests := []struct {
-		name     string
-		file     string
-		hasModel bool
-		hasMsg   bool
-		hasDone  bool
-	}{
-		{
-			name:     "ollama chat request",
-			file:     "fixtures/ollama-chat-request.json",
-			hasModel: true,
-		},
-		{
-			name:     "ollama chat response",
-			file:     "fixtures/ollama-chat-response.json",
-			hasModel: true,
-			hasMsg:   true,
-			hasDone:  true,
-		},
-		{
-			name:     "ollama streaming chunk",
-			file:     "fixtures/ollama-chat-streaming-chunk.json",
-			hasModel: true,
-			hasMsg:   true,
-			hasDone:  true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			path := filepath.Join("testdata", tt.file)
-			data, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatalf("Failed to read fixture %s: %v", path, err)
-			}
-
-			var result map[string]any
-			if err := json.Unmarshal(data, &result); err != nil {
-				t.Fatalf("Failed to parse JSON: %v", err)
-			}
-
-			if tt.hasModel {
-				if _, ok := result["model"].(string); !ok {
-					t.Error("Missing or invalid 'model' field")
-				}
-			}
-
-			if tt.hasMsg {
-				if msg, ok := result["message"].(map[string]any); !ok {
-					t.Error("Missing or invalid 'message' field")
-				} else {
-					if _, ok := msg["role"].(string); !ok {
-						t.Error("Missing 'role' in message")
-					}
-					if _, ok := msg["content"].(string); !ok {
-						t.Error("Missing 'content' in message")
-					}
-				}
-			}
-
-			if tt.hasDone {
-				if _, ok := result["done"].(bool); !ok {
-					t.Error("Missing or invalid 'done' field")
-				}
-			}
-		})
-	}
-}
-
 // TestOpenAIChatFixtures validates OpenAI chat request/response structure
 func TestOpenAIChatFixtures(t *testing.T) {
 	tests := []struct {
@@ -186,35 +115,6 @@ func TestOpenAIChatFixtures(t *testing.T) {
 
 // TestModelListFixtures validates model list response structures
 func TestModelListFixtures(t *testing.T) {
-	t.Run("ollama tags", func(t *testing.T) {
-		path := filepath.Join("testdata", "fixtures", "ollama-tags-response.json")
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("Failed to read fixture %s: %v", path, err)
-		}
-
-		var result map[string]any
-		if err := json.Unmarshal(data, &result); err != nil {
-			t.Fatalf("Failed to parse JSON: %v", err)
-		}
-
-		models, ok := result["models"].([]any)
-		if !ok {
-			t.Fatal("Missing or invalid 'models' field")
-		}
-
-		if len(models) == 0 {
-			t.Error("Expected at least one model")
-		}
-
-		for i, m := range models {
-			model := m.(map[string]any)
-			if _, ok := model["name"].(string); !ok {
-				t.Errorf("Model %d missing 'name' field", i)
-			}
-		}
-	})
-
 	t.Run("openai models", func(t *testing.T) {
 		path := filepath.Join("testdata", "fixtures", "openai-models-response.json")
 		data, err := os.ReadFile(path)

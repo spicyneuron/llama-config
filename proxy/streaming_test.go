@@ -1,17 +1,13 @@
 package proxy
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"testing"
-
-	"gopkg.in/yaml.v3"
 
 	"github.com/spicyneuron/llama-config-proxy/config"
 )
@@ -22,116 +18,6 @@ func mustParseURL(rawURL string) *url.URL {
 		panic(err)
 	}
 	return u
-}
-
-func TestModifyStreamingResponse_OpenAIFormat(t *testing.T) {
-	// Load config with streaming transformation
-	cfg := mustLoadRulesOnly(t, "../examples/rules-ollama.yml")
-
-	// Create mock streaming response (OpenAI SSE format)
-	sseData := `data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4o-mini","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
-
-data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4o-mini","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}
-
-data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4o-mini","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
-
-data: [DONE]
-
-`
-
-	resp := &http.Response{
-		StatusCode: 200,
-		Header: http.Header{
-			"Content-Type": []string{"text/event-stream"},
-		},
-		Body: io.NopCloser(strings.NewReader(sseData)),
-		Request: &http.Request{
-			Method: "POST",
-			URL:    mustParseURL("/api/chat"),
-		},
-	}
-
-	// Find matching rules
-	rules := FindMatchingRules(resp.Request, cfg)
-	if len(rules) == 0 {
-		t.Fatal("No matching rules found")
-	}
-	rule := rules[0]
-
-	// Apply streaming transformation
-	if err := ModifyStreamingResponse(resp, rule, 0); err != nil {
-		t.Fatalf("ModifyStreamingResponse failed: %v", err)
-	}
-
-	// Read transformed response
-	scanner := bufio.NewScanner(resp.Body)
-	var lines []string
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
-	}
-	resp.Body.Close()
-
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("Scanner error: %v", err)
-	}
-
-	// Verify transformation
-	// First chunk should be transformed to Ollama format with SSE prefix
-	if !strings.HasPrefix(lines[0], "data: ") {
-		t.Errorf("Expected SSE format, got: %s", lines[0])
-	}
-
-	// Check if first chunk contains Ollama fields
-	firstChunk := strings.TrimPrefix(lines[0], "data: ")
-	if !strings.Contains(firstChunk, `"done":false`) {
-		t.Errorf("Expected done:false in first chunk, got: %s", firstChunk)
-	}
-	if !strings.Contains(firstChunk, `"message"`) {
-		t.Errorf("Expected message field in chunk, got: %s", firstChunk)
-	}
-
-	// Check [DONE] marker is preserved
-	foundDone := false
-	for _, line := range lines {
-		if strings.Contains(line, "[DONE]") {
-			foundDone = true
-			break
-		}
-	}
-	if !foundDone {
-		t.Error("Expected [DONE] marker to be preserved")
-	}
-}
-
-func mustLoadRulesOnly(t *testing.T, path string) *config.Config {
-	t.Helper()
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("Failed to read %s: %v", path, err)
-	}
-
-	var rules []config.Rule
-	if err := yaml.Unmarshal(data, &rules); err != nil {
-		t.Fatalf("Failed to parse rules in %s: %v", path, err)
-	}
-
-	cfg := &config.Config{
-		Proxies: []config.ProxyConfig{{
-			Listen: "localhost:0",
-			Target: "http://localhost:0",
-		}},
-		Rules: rules,
-	}
-
-	if err := config.Validate(cfg); err != nil {
-		t.Fatalf("Failed to validate rules from %s: %v", path, err)
-	}
-	if err := config.CompileTemplates(cfg); err != nil {
-		t.Fatalf("Failed to compile templates from %s: %v", path, err)
-	}
-
-	return cfg
 }
 
 func TestModifyStreamingResponse_OllamaFormat(t *testing.T) {
