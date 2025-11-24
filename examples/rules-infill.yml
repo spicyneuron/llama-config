@@ -1,7 +1,7 @@
-# Infill for Qwen 3 Coder
+# Code infill for Qwen 3 Coder
+
 - methods: POST
   paths: .*/infill
-  target_path: /infill
 
   on_request:
     - merge:

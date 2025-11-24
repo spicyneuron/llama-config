@@ -1,0 +1,18 @@
+# Combined, modular example that server HTTP and SSL proxies for the same backend
+
+proxy:
+  - listen: localhost:9999
+    target: http://localhost:8080
+    timeout: 5m
+    ssl_cert: ./path/to/cert.pem
+    ssl_key: ./path/to/key.pem
+    rules:
+      - include: rules-chat.yml
+      - include: rules-infill.yml
+
+  - listen: localhost:9998
+    target: http://localhost:8080
+    timeout: 5m
+    rules:
+      - include: rules-chat.yml
+      - include: rules-infill.yml

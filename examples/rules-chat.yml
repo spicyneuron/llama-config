@@ -1,0 +1,15 @@
+# General support for OpenAI-compatible chat clients
+
+- methods: POST
+  paths: .*/chat/completions$
+  target_path: /v1/chat/completions
+
+  on_request:
+    # Aliases
+    - match_body:
+        model: ^(default)$
+      merge:
+        model: 230-minimax-m2
+
+    # Model-specific overrides
+    - include: ./rules-chat-models.yml
