@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -175,13 +176,23 @@ func startProxy(proxyCfg config.ProxyConfig) (*ProxyServer, error) {
 		http.Error(rw, "Bad Gateway", http.StatusBadGateway)
 	}
 
+	// Configure transport with optimized settings for mobile connections
+	transport := &http.Transport{
+		MaxIdleConnsPerHost: 5,
+		IdleConnTimeout:     90 * time.Second,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+	}
+
 	if proxyCfg.Timeout > 0 {
-		reverseProxy.Transport = &http.Transport{
-			TLSHandshakeTimeout:   proxyCfg.Timeout,
-			ResponseHeaderTimeout: proxyCfg.Timeout,
-		}
+		transport.TLSHandshakeTimeout = proxyCfg.Timeout
+		transport.ResponseHeaderTimeout = proxyCfg.Timeout
 		logger.Debug("Transport timeouts", "listen", proxyCfg.Listen, "tls_handshake", proxyCfg.Timeout, "response_header", proxyCfg.Timeout)
 	}
+
+	reverseProxy.Transport = transport
 
 	originalDirector := reverseProxy.Director
 	reverseProxy.Director = func(req *http.Request) {
