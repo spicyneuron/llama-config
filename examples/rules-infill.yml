@@ -1,0 +1,12 @@
+# Code infill for Qwen 3 Coder
+
+- methods: POST
+  paths: .*/infill
+
+  on_request:
+    - merge:
+        temperature: 0.7
+        top_k: 20
+        top_p: 0.8
+        min_p: 0
+        repeat_penalty: 1.05

@@ -1,35 +1,55 @@
 # Llama Config Proxy
 
-Managing multiple local LLMs can be a pain. Each model has different optimal parameters, but configuring every client individually is tedious.
+Managing multiple local LLMs can be a pain. Each model has different optimal parameters, and each client needs to be individually reconfigured when new models drop.
 
-This lightweight proxy sits between your LLM clients and servers, automatically applying your preferred settings to each request.
+This lightweight proxy sits between your LLM clients and servers, automatically transforming each request with model-specific logic.
 
-## Usage
+## What It Does
+
+- Sits in front of your LLM backends and rewrites requests/responses using declarative YAML rules.
+- Can match on methods, paths, headers, and JSON request body parameters.
+- Can rewrite request paths, apply defaults, update/delete fields, and render custom JSON via templates.
+- Hot-reloads when configs change.
+- Works with SSL or plain HTTP.
+
+## Quickstart
 
 ```sh
 # Install to $GOPATH/bin
 go install github.com/spicyneuron/llama-config-proxy@latest
 
-# Configure your server (llama.cpp, mlx_lm.server, etc) and model settings
-curl -o config.yml https://raw.githubusercontent.com/spicyneuron/llama-config-proxy/main/example.config.yml
+# Grab the latest examples
+curl -L https://github.com/spicyneuron/llama-config-proxy/archive/refs/heads/main.tar.gz \
+  | tar -xz --strip-components=1 llama-config-proxy-main/examples
 
-# Start the proxy
-llama-config-proxy --config config.yml
+# Start with the combined example (point it at your backend target)
+llama-config-proxy --config examples/combined.yml
 ```
 
-**Notes:**
+## Configuration & Behavior
 
-- Each request's model will be compared against your rules, and if matching, receive updated `params`.
-- First match wins, so order your rules from specific to general.
-- Use `all: true` to match every request, regardless of model.
-- Supports SSL termination (works great with [mkcert](https://github.com/FiloSottile/mkcert)).
-- All `proxy:` settings can also be set as CLI flags.
+Start from `examples/example.config.yml` for an annotated, OpenAI-compatible chat setup. At a glance:
+
+- Hierarchy: a `proxy` has ordered `rules`; each rule has ordered `operations`. All matching rules run; only the last matched rule’s `on_response` runs.
+- Proxies live under `proxy:` (single map or list). Each has `listen` and `target`; optional `timeout` and `ssl_cert`/`ssl_key`.
+- Rules match with case-insensitive regex on method/path. `target_path` rewrites outbound paths. `on_request` processes JSON bodies; non-JSON bodies pass through untouched.
+- Reuse proxies, rules, or operations with `include:`; paths resolve relative to the file that references them.
+- Operations:
+  - `merge` (override fields)
+  - `default` (set if missing)
+  - `delete` (remove keys)
+  - `template` (emit JSON with helpers like `toJson`, `default`, `uuid`, `now`, `add`, `mul`, `dict`, `index`, `kindIs`)
+  - `stop` (end remaining ops in the same rule)
+- Passing multiple `--config` files appends proxies and rules. CLI overrides for `listen/target/timeout/ssl-*` only work when exactly one proxy is defined.
 
 ## Development
 
 ```sh
 # Run
-go run main.go --config config.yml
+go run main.go --config examples/combined.yml
+
+# Test
+go test ./...
 
 # Build
 go build -o bin/ .

@@ -1,0 +1,12 @@
+proxy:
+  listen: "localhost:8081"
+  target: "http://localhost:8080"
+  timeout: 30s
+
+rules:
+  - methods: POST
+    paths: /v1/chat/completions
+    on_request:
+      - merge:
+          temperature: 0.7
+

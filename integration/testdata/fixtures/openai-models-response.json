@@ -1,0 +1,24 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "gpt-4",
+      "object": "model",
+      "created": 1687882411,
+      "owned_by": "openai"
+    },
+    {
+      "id": "gpt-3.5-turbo",
+      "object": "model",
+      "created": 1677610602,
+      "owned_by": "openai"
+    },
+    {
+      "id": "text-davinci-003",
+      "object": "model",
+      "created": 1669599635,
+      "owned_by": "openai-internal"
+    }
+  ]
+}
+

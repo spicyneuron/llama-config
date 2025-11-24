@@ -1,265 +1,92 @@
 package main
 
 import (
-	"bytes"
+	"context"
 	"crypto/tls"
-	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
-	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
-	"path/filepath"
-	"regexp"
-	"slices"
-	"strings"
+	"os/signal"
+	"sync"
+	"syscall"
 	"time"
 
-	"gopkg.in/yaml.v3"
+	"github.com/fsnotify/fsnotify"
+	"github.com/spicyneuron/llama-config-proxy/config"
+	"github.com/spicyneuron/llama-config-proxy/logger"
+	"github.com/spicyneuron/llama-config-proxy/proxy"
 )
 
-type Config struct {
-	Proxy ProxyConfig `yaml:"proxy"`
-	Rules []Rule      `yaml:"rules"`
+// configFiles allows multiple -config flags
+type configFiles []string
+
+func (c *configFiles) String() string {
+	return fmt.Sprint(*c)
 }
 
-type CliOverrides struct {
-	Listen  string
-	Target  string
-	Timeout time.Duration
-	SSLCert string
-	SSLKey  string
-	Debug   bool
-}
-
-type ProxyConfig struct {
-	Listen  string        `yaml:"listen"`
-	Target  string        `yaml:"target"`
-	Timeout time.Duration `yaml:"timeout"`
-	SSLCert string        `yaml:"ssl_cert"`
-	SSLKey  string        `yaml:"ssl_key"`
-	Debug   bool          `yaml:"debug"`
-}
-
-type PatternField []string
-
-func (p *PatternField) UnmarshalYAML(unmarshal func(any) error) error {
-	var single string
-	if err := unmarshal(&single); err == nil {
-		*p = PatternField{single}
-		return nil
-	}
-
-	var multiple []string
-	if err := unmarshal(&multiple); err == nil {
-		*p = PatternField(multiple)
-		return nil
-	}
-
-	return fmt.Errorf("patterns must be string or []string")
-}
-
-func (p PatternField) Validate() error {
-	for _, pattern := range p {
-		if _, err := regexp.Compile(regexFlags + pattern); err != nil {
-			return fmt.Errorf("invalid regex pattern '%s': %w", pattern, err)
-		}
-	}
+func (c *configFiles) Set(value string) error {
+	*c = append(*c, value)
 	return nil
 }
 
-type Rule struct {
-	Methods    PatternField `yaml:"methods"`
-	Paths      PatternField `yaml:"paths"`
-	TargetPath string       `yaml:"target_path"`
-	Operations []Operation  `yaml:"operations"`
+// ProxyServer tracks a running proxy server
+type ProxyServer struct {
+	server *http.Server
+	config config.ProxyConfig
 }
 
-type Operation struct {
-	Filters map[string]PatternField `yaml:"filters"`
-	Merge   map[string]any          `yaml:"merge,omitempty"`
-	Default map[string]any          `yaml:"default,omitempty"`
-	Delete  []string                `yaml:"delete,omitempty"`
-	Stop    bool                    `yaml:"stop,omitempty"`
+type fileWatcher interface {
+	Add(name string) error
+	Close() error
+	Events() <-chan fsnotify.Event
+	Errors() <-chan error
 }
 
-// =============================================================================
-// Configuration
-// =============================================================================
-
-var debugMode bool
-
-const regexFlags = "(?i)"
-
-func loadConfig(configPath string, overrides CliOverrides) (*Config, error) {
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %w", err)
-	}
-
-	var config Config
-	if err := yaml.Unmarshal(data, &config); err != nil {
-		return nil, fmt.Errorf("failed to parse config file: %w", err)
-	}
-
-	applyOverrides(&config.Proxy, overrides)
-
-	if config.Proxy.Timeout == 0 {
-		config.Proxy.Timeout = 60 * time.Second
-	}
-
-	configDir := filepath.Dir(configPath)
-	config.Proxy.SSLCert = resolveSSLPath(config.Proxy.SSLCert, configDir)
-	config.Proxy.SSLKey = resolveSSLPath(config.Proxy.SSLKey, configDir)
-
-	if err := validateConfig(&config); err != nil {
-		return nil, fmt.Errorf("config validation failed: %w", err)
-	}
-
-	return &config, nil
+type realWatcher struct {
+	*fsnotify.Watcher
 }
 
-func validateConfig(config *Config) error {
-	if config.Proxy.Listen == "" {
-		return fmt.Errorf("proxy.listen is required")
-	}
-	if config.Proxy.Target == "" {
-		return fmt.Errorf("proxy.target is required")
-	}
+func (w *realWatcher) Events() <-chan fsnotify.Event {
+	return w.Watcher.Events
+}
 
-	if _, err := url.Parse(config.Proxy.Target); err != nil {
-		return fmt.Errorf("invalid proxy.target URL: %w", err)
-	}
+func (w *realWatcher) Errors() <-chan error {
+	return w.Watcher.Errors
+}
 
-	if (config.Proxy.SSLCert != "" && config.Proxy.SSLKey == "") ||
-		(config.Proxy.SSLCert == "" && config.Proxy.SSLKey != "") {
-		return fmt.Errorf("both ssl_cert and ssl_key must be provided together")
-	}
-
-	for i, rule := range config.Rules {
-		if err := validateRule(&rule, i); err != nil {
-			return err
+var (
+	runningServers []*ProxyServer
+	serversMutex   sync.RWMutex
+	currentConfig  *config.Config
+	watchedFiles   []string
+	configWatcher  fileWatcher
+	configPaths    configFiles
+	overrides      config.CliOverrides
+	reloadMutex    sync.Mutex
+	reloadTimer    *time.Timer
+	watcherMutex   sync.Mutex
+	watchFactory   = func() (fileWatcher, error) {
+		w, err := fsnotify.NewWatcher()
+		if err != nil {
+			return nil, err
 		}
+		return &realWatcher{Watcher: w}, nil
 	}
+	startAllProxiesFn func(cfg *config.Config) error = startAllProxies
+	stopAllProxiesFn  func()                         = stopAllProxies
+	reloadConfigFn    func()
+)
 
-	return nil
+func init() {
+	reloadConfigFn = reloadConfig
 }
-
-func validateRule(rule *Rule, index int) error {
-	if len(rule.Methods) == 0 {
-		return fmt.Errorf("match rule %d: methods required", index)
-	}
-	if len(rule.Paths) == 0 {
-		return fmt.Errorf("match rule %d: paths required", index)
-	}
-	if len(rule.Operations) == 0 {
-		return fmt.Errorf("match rule %d: at least one operation required", index)
-	}
-	if rule.TargetPath != "" && !strings.HasPrefix(rule.TargetPath, "/") {
-		return fmt.Errorf("match rule %d: target_path must be absolute", index)
-	}
-
-	if err := rule.Methods.Validate(); err != nil {
-		return fmt.Errorf("match rule %d methods: %w", index, err)
-	}
-	if err := rule.Paths.Validate(); err != nil {
-		return fmt.Errorf("match rule %d paths: %w", index, err)
-	}
-
-	for opIdx, op := range rule.Operations {
-		if err := validateOperation(&op, index, opIdx); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func validateOperation(op *Operation, ruleIndex, opIndex int) error {
-	for key, patterns := range op.Filters {
-		if err := patterns.Validate(); err != nil {
-			return fmt.Errorf("rule %d operation %d filter '%s': %w", ruleIndex, opIndex, key, err)
-		}
-	}
-
-	if len(op.Merge) == 0 && len(op.Default) == 0 && len(op.Delete) == 0 {
-		return fmt.Errorf("rule %d operation %d: must have at least one action (merge, default, or delete)", ruleIndex, opIndex)
-	}
-
-	for key, value := range op.Merge {
-		if key == "" {
-			return fmt.Errorf("rule %d operation %d: merge action cannot have empty key", ruleIndex, opIndex)
-		}
-		if value == nil {
-			return fmt.Errorf("rule %d operation %d: merge action key '%s' cannot have nil value", ruleIndex, opIndex, key)
-		}
-	}
-
-	for key, value := range op.Default {
-		if key == "" {
-			return fmt.Errorf("rule %d operation %d: default action cannot have empty key", ruleIndex, opIndex)
-		}
-		if value == nil {
-			return fmt.Errorf("rule %d operation %d: default action key '%s' cannot have nil value", ruleIndex, opIndex, key)
-		}
-	}
-
-	if slices.Contains(op.Delete, "") {
-		return fmt.Errorf("rule %d operation %d: delete action cannot contain empty keys", ruleIndex, opIndex)
-	}
-
-	return nil
-}
-
-func applyOverrides(proxy *ProxyConfig, overrides CliOverrides) {
-	if overrides.Listen != "" {
-		proxy.Listen = overrides.Listen
-	}
-	if overrides.Target != "" {
-		proxy.Target = overrides.Target
-	}
-	if overrides.Timeout > 0 {
-		proxy.Timeout = overrides.Timeout
-	}
-	if overrides.SSLCert != "" {
-		proxy.SSLCert = overrides.SSLCert
-	}
-	if overrides.SSLKey != "" {
-		proxy.SSLKey = overrides.SSLKey
-	}
-	if overrides.Debug {
-		proxy.Debug = overrides.Debug
-	}
-}
-
-func resolveSSLPath(sslPath, configDir string) string {
-	if sslPath == "" {
-		return ""
-	}
-
-	if filepath.IsAbs(sslPath) {
-		return sslPath
-	}
-
-	return filepath.Join(configDir, sslPath)
-}
-
-func logDebug(format string, args ...any) {
-	if debugMode {
-		log.Printf("[DEBUG] "+format, args...)
-	}
-}
-
-// =============================================================================
-// Server & Main
-// =============================================================================
 
 func main() {
 	var (
-		configFile = flag.String("config", "", "Path to YAML configuration (required)")
 		listenAddr = flag.String("listen", "", "Address to listen on (ex: localhost:8081)")
 		targetURL  = flag.String("target", "", "Target URL to proxy to (ex: http://localhost:8080)")
 		sslCert    = flag.String("ssl-cert", "", "SSL certificate file (ex: cert.pem)")
@@ -268,10 +95,12 @@ func main() {
 		debug      = flag.Bool("debug", false, "Print debug logs")
 	)
 
+	flag.Var(&configPaths, "config", "Path to YAML configuration (can be specified multiple times)")
+
 	flag.Usage = func() {
 		fmt.Println("llama-config-proxy: Automatically apply optimal settings to LLM requests")
 		fmt.Println()
-		fmt.Println("Usage: llama-config-proxy --config <config.yml>")
+		fmt.Println("Usage: llama-config-proxy -config <config.yml> [-config <rules.yml> ...]")
 		fmt.Println()
 		flag.PrintDefaults()
 		fmt.Println()
@@ -281,224 +110,353 @@ func main() {
 
 	flag.Parse()
 
-	if *configFile == "" {
+	if len(configPaths) == 0 {
 		flag.Usage()
 		os.Exit(1)
 	}
 
-	overrides := CliOverrides{*listenAddr, *targetURL, *timeout, *sslCert, *sslKey, *debug}
+	overrides = config.CliOverrides{
+		Listen:  *listenAddr,
+		Target:  *targetURL,
+		Timeout: *timeout,
+		SSLCert: *sslCert,
+		SSLKey:  *sslKey,
+		Debug:   *debug,
+	}
 
-	config, err := loadConfig(*configFile, overrides)
+	cfg, files, err := config.Load(configPaths, overrides)
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		logger.Fatal("Failed to load config", "err", err)
+	}
+	currentConfig = cfg
+	watchedFiles = files
+
+	if err := startAllProxiesFn(cfg); err != nil {
+		logger.Fatal("Failed to start proxies", "err", err)
 	}
 
-	debugMode = config.Proxy.Debug
-	log.Printf("Loaded config from: %s", *configFile)
-
-	targetURLParsed, err := url.Parse(config.Proxy.Target)
-	if err != nil {
-		log.Fatalf("Invalid target server URL: %v", err)
+	if err := setWatcher(files); err != nil {
+		logger.Fatal("Failed to setup file watcher", "err", err)
 	}
+	defer closeWatcher()
 
-	proxy := httputil.NewSingleHostReverseProxy(targetURLParsed)
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
-	if config.Proxy.Timeout > 0 {
-		proxy.Transport = &http.Transport{
-			TLSHandshakeTimeout:   config.Proxy.Timeout,
-			ResponseHeaderTimeout: config.Proxy.Timeout,
-		}
-		log.Printf("Configured timeout: %v", config.Proxy.Timeout)
-	}
+	logger.Info("Watching for config changes", "watched_files", len(files))
 
-	originalDirector := proxy.Director
-	proxy.Director = func(req *http.Request) {
-		log.Printf("%s %s", req.Method, req.URL.Path)
-		originalDirector(req)
-		modifyRequest(req, config)
-	}
-
-	listenAddrFinal := config.Proxy.Listen
-	server := createServer(listenAddrFinal, proxy, config)
-
-	if config.Proxy.SSLCert != "" && config.Proxy.SSLKey != "" {
-		log.Printf("Proxying https://%s to %s", listenAddrFinal, config.Proxy.Target)
-		log.Fatalf("HTTPS server failed: %v", server.ListenAndServeTLS(config.Proxy.SSLCert, config.Proxy.SSLKey))
-	} else {
-		log.Printf("Proxying http://%s to %s", listenAddrFinal, config.Proxy.Target)
-		log.Fatalf("HTTP server failed: %v", server.ListenAndServe())
-	}
+	<-sigCh
+	logger.Info("Shutdown requested", "proxies", len(runningServers))
+	stopAllProxies()
+	logger.Info("Shutdown complete")
 }
 
-func createServer(addr string, handler http.Handler, config *Config) *http.Server {
+func CreateServer(cfg config.ProxyConfig, handler http.Handler) *http.Server {
 	server := &http.Server{
-		Addr:    addr,
+		Addr:    cfg.Listen,
 		Handler: handler,
 	}
 
-	if config.Proxy.SSLCert != "" && config.Proxy.SSLKey != "" {
-		cert, err := tls.LoadX509KeyPair(config.Proxy.SSLCert, config.Proxy.SSLKey)
+	if cfg.SSLCert != "" && cfg.SSLKey != "" {
+		cert, err := tls.LoadX509KeyPair(cfg.SSLCert, cfg.SSLKey)
 		if err != nil {
-			log.Fatalf("Failed to load SSL certificates: %v", err)
+			logger.Fatal("Failed to load SSL certificates", "err", err)
 		}
 		server.TLSConfig = &tls.Config{
 			Certificates: []tls.Certificate{cert},
 		}
 	}
 
-	server.ReadTimeout = config.Proxy.Timeout
-	server.WriteTimeout = config.Proxy.Timeout
+	if cfg.Timeout > 0 {
+		server.IdleTimeout = cfg.Timeout
+	}
 
 	return server
 }
 
-// =============================================================================
-// Request Processing & Rule Engine
-// =============================================================================
-
-func modifyRequest(req *http.Request, config *Config) {
-	matchingRule := findMatchingRule(req, config)
-	if matchingRule == nil {
-		logDebug("No matching rule for %s %s", req.Method, req.URL.Path)
-		return
+func startProxy(proxyCfg config.ProxyConfig) (*ProxyServer, error) {
+	proxyConfigForHandlers := &config.Config{
+		Proxies: []config.ProxyConfig{proxyCfg},
+		Rules:   proxyCfg.Rules,
 	}
 
-	if matchingRule.TargetPath != "" {
-		originalPath := req.URL.Path
-		req.URL.Path = matchingRule.TargetPath
-		logDebug("Rewrote request path from %s to %s", originalPath, matchingRule.TargetPath)
-	}
-
-	body, err := io.ReadAll(req.Body)
+	targetURLParsed, err := url.Parse(proxyCfg.Target)
 	if err != nil {
-		log.Printf("Failed to read request body: %v", err)
-		return
-	}
-	req.Body.Close()
-
-	if debugMode && len(body) > 0 {
-		var prettyJSON bytes.Buffer
-		json.Indent(&prettyJSON, body, "", "  ")
-		logDebug("Inbound request body:\n%s", prettyJSON.String())
+		return nil, fmt.Errorf("invalid target URL: %w", err)
 	}
 
-	var data map[string]any
-	if err := json.Unmarshal(body, &data); err != nil {
-		log.Printf("Failed to parse JSON request: %v", err)
-		req.Body = io.NopCloser(bytes.NewReader(body))
-		return
+	reverseProxy := httputil.NewSingleHostReverseProxy(targetURLParsed)
+	reverseProxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, err error) {
+		logger.Error("Reverse proxy error",
+			"listen", proxyCfg.Listen,
+			"target_host", targetURLParsed.Host,
+			"method", req.Method,
+			"path", req.URL.Path,
+			"err", err)
+		http.Error(rw, "Bad Gateway", http.StatusBadGateway)
 	}
 
-	modified, appliedValues := processRules(data, matchingRule.Operations)
-
-	modifiedBody, err := json.Marshal(data)
-	if err != nil {
-		log.Printf("Failed to marshal modified JSON: %v", err)
-		req.Body = io.NopCloser(bytes.NewReader(body))
-		return
+	// Configure transport with optimized settings for mobile connections
+	transport := &http.Transport{
+		MaxIdleConnsPerHost: 5,
+		IdleConnTimeout:     90 * time.Second,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
 	}
 
-	req.Body = io.NopCloser(bytes.NewReader(modifiedBody))
-	req.ContentLength = int64(len(modifiedBody))
+	if proxyCfg.Timeout > 0 {
+		transport.TLSHandshakeTimeout = proxyCfg.Timeout
+		transport.ResponseHeaderTimeout = proxyCfg.Timeout
+	}
 
-	if modified {
-		appliedJSON, _ := json.MarshalIndent(appliedValues, "", "  ")
-		logDebug("Applied changes:\n%s", string(appliedJSON))
+	reverseProxy.Transport = transport
+
+	originalDirector := reverseProxy.Director
+	reverseProxy.Director = func(req *http.Request) {
+		originalDirector(req)
+		proxy.ModifyRequest(req, proxyConfigForHandlers)
+	}
+
+	reverseProxy.ModifyResponse = func(resp *http.Response) error {
+		return proxy.ModifyResponse(resp, proxyConfigForHandlers)
+	}
+
+	server := CreateServer(proxyCfg, reverseProxy)
+
+	ps := &ProxyServer{
+		server: server,
+		config: proxyCfg,
+	}
+
+	// Log start before launching the server goroutine to keep ordering intuitive
+	logListen := proxyCfg.Listen
+	if proxyCfg.SSLCert != "" && proxyCfg.SSLKey != "" {
+		logListen = "https://" + logListen
+		logger.Info("Starting HTTPS proxy", "listen", logListen, "target", proxyCfg.Target)
+	} else {
+		logListen = "http://" + logListen
+		logger.Info("Starting HTTP proxy", "listen", logListen, "target", proxyCfg.Target)
+	}
+
+	go func() {
+		var err error
+		if proxyCfg.SSLCert != "" && proxyCfg.SSLKey != "" {
+			err = server.ListenAndServeTLS(proxyCfg.SSLCert, proxyCfg.SSLKey)
+		} else {
+			err = server.ListenAndServe()
+		}
+		if err != nil && err != http.ErrServerClosed {
+			logger.Error("Proxy server stopped with error", "listen", proxyCfg.Listen, "err", err)
+		}
+	}()
+
+	return ps, nil
+}
+
+func stopProxy(ps *ProxyServer) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	logger.Debug("Stopping proxy", "listen", ps.config.Listen)
+	if err := ps.server.Shutdown(ctx); err != nil {
+		logger.Error("Error during proxy shutdown", "listen", ps.config.Listen, "err", err)
 	}
 }
 
-func findMatchingRule(req *http.Request, config *Config) *Rule {
-	for _, rule := range config.Rules {
-		if matchesMethod(req.Method, rule.Methods) && matchesPath(req.URL.Path, rule.Paths) {
-			return &rule
+func stopAllProxies() {
+	serversMutex.Lock()
+	defer serversMutex.Unlock()
+
+	logger.Info("Stopping proxies", "count", len(runningServers))
+	var wg sync.WaitGroup
+	for _, ps := range runningServers {
+		wg.Add(1)
+		go func(p *ProxyServer) {
+			defer wg.Done()
+			stopProxy(p)
+		}(ps)
+	}
+	wg.Wait()
+	runningServers = nil
+
+	// Give OS time to fully release the ports
+	time.Sleep(100 * time.Millisecond)
+}
+
+func startAllProxies(cfg *config.Config) error {
+	serversMutex.Lock()
+	defer serversMutex.Unlock()
+
+	debugEnabled := false
+	for _, proxyCfg := range cfg.Proxies {
+		if proxyCfg.Debug {
+			debugEnabled = true
+			break
 		}
 	}
+	logger.EnableDebug(debugEnabled)
+
+	logResolvedConfig(cfg)
+
+	for i, proxyCfg := range cfg.Proxies {
+		ps, err := startProxy(proxyCfg)
+		if err != nil {
+			logger.Fatal("Failed to start proxy", "index", i, "err", err)
+			return err
+		}
+		runningServers = append(runningServers, ps)
+	}
+
+	logger.Debug("All proxies started", "count", len(runningServers))
 	return nil
 }
 
-func matchesPattern(input string, patterns PatternField) bool {
-	for _, pattern := range patterns {
-		if matched, err := regexp.MatchString(regexFlags+pattern, input); err == nil && matched {
-			return true
+func logResolvedConfig(cfg *config.Config) {
+	if !logger.IsDebug() {
+		return
+	}
+
+	totalProxyRules := 0
+	sslEnabled := 0
+
+	for i, p := range cfg.Proxies {
+		logListen := p.Listen
+		if p.SSLCert != "" && p.SSLKey != "" {
+			logListen = "https://" + logListen
+		} else {
+			logListen = "http://" + logListen
+		}
+
+		reqOps := 0
+		respOps := 0
+		for _, r := range p.Rules {
+			reqOps += len(r.OnRequest)
+			respOps += len(r.OnResponse)
+		}
+
+		logger.Debug(fmt.Sprintf("Proxy %d configured", i+1),
+			"listen", logListen,
+			"target", p.Target,
+			"timeout", p.Timeout,
+			"rules", len(p.Rules),
+			"request_ops", reqOps,
+			"response_ops", respOps,
+		)
+		totalProxyRules += len(p.Rules)
+		if p.SSLCert != "" && p.SSLKey != "" {
+			sslEnabled++
 		}
 	}
-	return false
+
 }
 
-func matchesMethod(method string, methods PatternField) bool {
-	return matchesPattern(method, methods)
+func setupFileWatcher(watchedFiles []string) (fileWatcher, error) {
+	watcher, err := watchFactory()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create watcher: %w", err)
+	}
+
+	for _, file := range watchedFiles {
+		if err := watcher.Add(file); err != nil {
+			logger.Error("Failed to watch file", "file", file, "err", err)
+			continue
+		}
+		logger.Debug("Watching file", "file", file)
+	}
+
+	return watcher, nil
 }
 
-func matchesPath(path string, paths PatternField) bool {
-	return matchesPattern(path, paths)
+func setWatcher(files []string) error {
+	watcherMutex.Lock()
+	defer watcherMutex.Unlock()
+
+	if configWatcher != nil {
+		configWatcher.Close()
+	}
+
+	watcher, err := setupFileWatcher(files)
+	if err != nil {
+		return err
+	}
+	configWatcher = watcher
+	go watchForChanges(watcher)
+	return nil
 }
 
-func processRules(data map[string]any, operations []Operation) (bool, map[string]any) {
-	appliedValues := make(map[string]any)
-	anyApplied := false
+func closeWatcher() {
+	watcherMutex.Lock()
+	defer watcherMutex.Unlock()
 
-	for _, op := range operations {
-		if satisfiesFilter(data, op.Filters) {
-			if len(op.Default) > 0 {
-				applyDefaultOperation(data, op.Default, appliedValues)
-				anyApplied = true
+	if configWatcher != nil {
+		configWatcher.Close()
+	}
+}
+
+func watchForChanges(watcher fileWatcher) {
+	for {
+		select {
+		case event, ok := <-watcher.Events():
+			if !ok {
+				return
 			}
-			if len(op.Merge) > 0 {
-				applyMergeOperation(data, op.Merge, appliedValues)
-				anyApplied = true
+			if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename) != 0 {
+				logger.Debug("Config file changed", "file", event.Name, "op", event.Op.String())
+				debounceReload()
 			}
-			if len(op.Delete) > 0 {
-				applyDeleteOperation(data, op.Delete, appliedValues)
-				anyApplied = true
+		case err, ok := <-watcher.Errors():
+			if !ok {
+				return
 			}
-			if op.Stop {
-				break
-			}
-		}
-	}
-	return anyApplied, appliedValues
-}
-
-func applyMergeOperation(data map[string]any, mergeValues map[string]any, appliedValues map[string]any) {
-	for key, value := range mergeValues {
-		data[key] = value
-		appliedValues[key] = value
-	}
-}
-
-func applyDefaultOperation(data map[string]any, defaultValues map[string]any, appliedValues map[string]any) {
-	for key, value := range defaultValues {
-		if _, exists := data[key]; !exists {
-			data[key] = value
-			appliedValues[key] = value
+			logger.Error("File watcher error", "err", err)
 		}
 	}
 }
 
-func applyDeleteOperation(data map[string]any, deleteKeys []string, appliedValues map[string]any) {
-	for _, key := range deleteKeys {
-		if _, exists := data[key]; exists {
-			delete(data, key)
-			appliedValues[key] = "<deleted>"
-		}
+func debounceReload() {
+	reloadMutex.Lock()
+	defer reloadMutex.Unlock()
+
+	if reloadTimer != nil {
+		reloadTimer.Stop()
 	}
+
+	reloadTimer = time.AfterFunc(200*time.Millisecond, func() {
+		logger.Info("Config file changed, reloading...")
+		if reloadConfigFn != nil {
+			reloadConfigFn()
+		}
+	})
 }
 
-func satisfiesFilter(data map[string]any, filters map[string]PatternField) bool {
-	if len(filters) == 0 {
-		return true
+func reloadConfig() {
+	newCfg, newFiles, err := config.Load(configPaths, overrides)
+	if err != nil {
+		logger.Error("Failed to reload config, keeping current config", "err", err)
+		return
 	}
 
-	for key, patterns := range filters {
-		actualValue, exists := data[key]
-		if !exists {
-			return false
-		}
+	logger.Info("Successfully loaded new config")
 
-		actualStr := fmt.Sprintf("%v", actualValue)
-		if !matchesPattern(actualStr, patterns) {
-			return false
+	stopAllProxiesFn()
+
+	if err := startAllProxiesFn(newCfg); err != nil {
+		logger.Error("Failed to start proxies with new config, attempting to restore previous config", "err", err)
+		if err := startAllProxiesFn(currentConfig); err != nil {
+			logger.Fatal("Failed to restore previous config", "err", err)
 		}
+		logger.Info("Restored previous config")
+		return
 	}
-	return true
+
+	currentConfig = newCfg
+	watchedFiles = newFiles
+
+	if err := setWatcher(newFiles); err != nil {
+		logger.Error("Failed to update file watcher after reload", "err", err)
+	}
+
+	logger.Info("Config reloaded successfully", "proxies", len(newCfg.Proxies), "watched_files", len(newFiles))
 }
