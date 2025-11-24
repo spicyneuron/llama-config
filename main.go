@@ -36,7 +36,6 @@ func (c *configFiles) Set(value string) error {
 // ProxyServer tracks a running proxy server
 type ProxyServer struct {
 	server *http.Server
-	cancel context.CancelFunc
 	config config.ProxyConfig
 }
 
@@ -90,7 +89,6 @@ func main() {
 		Debug:   *debug,
 	}
 
-	// Initial config load
 	cfg, files, err := config.Load(configPaths, overrides)
 	if err != nil {
 		logger.Fatal("Failed to load config", "err", err)
@@ -104,22 +102,18 @@ func main() {
 		logger.Info("Loaded config files", "count", len(configPaths), "paths", configPaths)
 	}
 
-	// Start all proxies
 	if err := startAllProxies(cfg); err != nil {
 		logger.Fatal("Failed to start proxies", "err", err)
 	}
 
-	// Setup file watcher
 	watcher, err := setupFileWatcher(files)
 	if err != nil {
 		logger.Fatal("Failed to setup file watcher", "err", err)
 	}
 	defer watcher.Close()
 
-	// Start watching for config changes
 	go watchForChanges(watcher)
 
-	// Wait for signals
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
@@ -206,10 +200,8 @@ func startProxy(proxyCfg config.ProxyConfig) (*ProxyServer, error) {
 
 	server := CreateServer(proxyCfg, reverseProxy)
 
-	_, cancel := context.WithCancel(context.Background())
 	ps := &ProxyServer{
 		server: server,
-		cancel: cancel,
 		config: proxyCfg,
 	}
 
@@ -238,7 +230,6 @@ func stopProxy(ps *ProxyServer) {
 	if err := ps.server.Shutdown(ctx); err != nil {
 		logger.Error("Error during proxy shutdown", "listen", ps.config.Listen, "err", err)
 	}
-	ps.cancel()
 }
 
 func stopAllProxies() {
@@ -339,7 +330,6 @@ func debounceReload() {
 }
 
 func reloadConfig() {
-	// Load new config
 	newCfg, newFiles, err := config.Load(configPaths, overrides)
 	if err != nil {
 		logger.Error("Failed to reload config, keeping current config", "err", err)
@@ -348,13 +338,10 @@ func reloadConfig() {
 
 	logger.Info("Successfully loaded new config")
 
-	// Stop all current proxies
 	stopAllProxies()
 
-	// Start proxies with new config
 	if err := startAllProxies(newCfg); err != nil {
 		logger.Error("Failed to start proxies with new config, attempting to restore previous config", "err", err)
-		// Try to restore previous config
 		if err := startAllProxies(currentConfig); err != nil {
 			logger.Fatal("Failed to restore previous config", "err", err)
 		}

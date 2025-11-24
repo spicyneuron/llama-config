@@ -25,7 +25,6 @@ func parseConfig(t *testing.T, yamlContent string) (*Config, error) {
 		return nil, err
 	}
 
-	// Apply defaults
 	for i := range cfg.Proxies {
 		if cfg.Proxies[i].Timeout == 0 {
 			cfg.Proxies[i].Timeout = 60 * time.Second
@@ -36,12 +35,10 @@ func parseConfig(t *testing.T, yamlContent string) (*Config, error) {
 		}
 	}
 
-	// Validate
 	if err := Validate(&cfg); err != nil {
 		return nil, err
 	}
 
-	// Compile templates
 	if err := CompileTemplates(&cfg); err != nil {
 		return nil, err
 	}
