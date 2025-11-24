@@ -33,7 +33,7 @@ llama-matchmaker --config example.config.yml
 
 Start from `examples/example.config.yml` for an annotated, OpenAI-compatible chat setup. At a glance:
 
-- Hierarchy: a `proxy` has ordered `rules`; each rule has ordered `operations`. All matching rules run; only the last matched rule’s `on_response` runs.
+- Hierarchy: a `proxy` has ordered `rules`; each rule has ordered `operations`. All matching rules run; `on_response` runs for each matched rule in order.
 - Proxies live under `proxy:` (single map or list). Each has `listen` and `target`; optional `timeout` and `ssl_cert`/`ssl_key`.
 - Rules match with case-insensitive regex on method/path. `target_path` rewrites outbound paths. `on_request` processes JSON bodies; non-JSON bodies pass through untouched.
 - Reuse proxies, rules, or operations with `include:`; paths resolve relative to the file that references them.

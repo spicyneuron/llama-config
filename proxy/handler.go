@@ -19,8 +19,8 @@ type contextKey string
 const ruleContextKey contextKey = "matched_rule"
 
 type responseRuleContext struct {
-	rule  *config.Rule
-	index int
+	rules   []*config.Rule
+	indices []int
 }
 
 func headersJSON(headers map[string][]string) string {
@@ -123,12 +123,11 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 		}
 	}
 
-	// Track the last matched rule for response processing
-	var lastMatchedRule responseRuleContext
+	// Track matched rules for response processing
+	var matchedResponseRules responseRuleContext
 	anyModified := false
 	allAppliedValues := make(map[string]any)
 	matchedCount := 0
-	var matchedRuleIndices []int
 
 	// Process rules sequentially: check and apply each rule before moving to next
 	for i := range cfg.Rules {
@@ -146,8 +145,8 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 		logger.Debug("Rule matched", "index", i, "methods", rule.Methods.Patterns, "paths", rule.Paths.Patterns)
 
 		matchedCount++
-		lastMatchedRule = responseRuleContext{rule: rule, index: i}
-		matchedRuleIndices = append(matchedRuleIndices, i)
+		matchedResponseRules.rules = append(matchedResponseRules.rules, rule)
+		matchedResponseRules.indices = append(matchedResponseRules.indices, i)
 
 		// Handle target path rewriting
 		if rule.TargetPath != "" {
@@ -177,8 +176,8 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 	}
 
 	// Store the last matching rule in context for response processing
-	if lastMatchedRule.rule != nil {
-		ctx := context.WithValue(req.Context(), ruleContextKey, &lastMatchedRule)
+	if len(matchedResponseRules.rules) > 0 {
+		ctx := context.WithValue(req.Context(), ruleContextKey, &matchedResponseRules)
 		*req = *req.WithContext(ctx)
 	}
 
@@ -200,7 +199,7 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 			"changes", len(allAppliedValues),
 		}
 		if matchedCount > 0 {
-			fields = append(fields, "matched_rules", matchedRuleIndices)
+			fields = append(fields, "matched_rules", matchedResponseRules.indices)
 		}
 		logger.Info("Outbound request", fields...)
 
@@ -221,29 +220,37 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 	contentType := resp.Header.Get("Content-Type")
 
 	// Get the rule from context (may be nil)
-	var matchingRule *config.Rule
-	ruleIndex := -1
+	var matchedRules []*config.Rule
+	var matchedRuleIndices []int
 	switch v := resp.Request.Context().Value(ruleContextKey).(type) {
 	case *responseRuleContext:
 		if v != nil {
-			matchingRule = v.rule
-			ruleIndex = v.index
+			matchedRules = v.rules
+			matchedRuleIndices = v.indices
 		}
 	case *config.Rule:
-		matchingRule = v
+		matchedRules = []*config.Rule{v}
+	}
+
+	if len(matchedRules) > 0 && len(matchedRuleIndices) != len(matchedRules) {
+		// Ensure indices slice aligns with rules length (backward compatibility for contexts without indices)
+		matchedRuleIndices = make([]int, len(matchedRules))
+		for i := range matchedRuleIndices {
+			matchedRuleIndices[i] = -1
+		}
 	}
 
 	// Route to streaming handler if SSE (log events even without on_response operations)
 	if strings.Contains(contentType, "text/event-stream") {
-		if matchingRule == nil || len(matchingRule.OnResponse) == 0 {
+		if len(matchedRules) == 0 {
 			logger.Info("Streaming response", "method", method, "path", path, "status", resp.StatusCode, "content_type", contentType)
 		} else {
-			logger.Info("Streaming response", "method", method, "path", path, "status", resp.StatusCode, "content_type", contentType, "rule_index", ruleIndex)
+			logger.Info("Streaming response", "method", method, "path", path, "status", resp.StatusCode, "content_type", contentType, "matched_rules", matchedRuleIndices)
 		}
 		if logger.IsDebug() {
 			logger.Debug("Streaming response headers", "headers", headersJSON(resp.Header))
 		}
-		return ModifyStreamingResponse(resp, matchingRule, ruleIndex)
+		return ModifyStreamingResponse(resp, matchedRules, matchedRuleIndices)
 	}
 
 	// Read response body (limit to 10MB)
@@ -271,20 +278,27 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 	resp.ContentLength = int64(len(body))
 
-	if matchingRule == nil {
+	if len(matchedRules) == 0 {
 		logger.Info("Outbound response", "method", method, "path", path, "status", resp.StatusCode, "changes", 0, "reason", "no_matching_rule", "content_type", contentType)
 		return nil
 	}
 
-	// Skip if no response operations
-	if len(matchingRule.OnResponse) == 0 {
-		logger.Info("Outbound response", "method", method, "path", path, "status", resp.StatusCode, "changes", 0, "reason", "no_on_response_operations", "rule_index", ruleIndex, "content_type", contentType)
+	// Skip if no response operations in any matched rule
+	hasResponseOps := false
+	for _, r := range matchedRules {
+		if len(r.OnResponse) > 0 {
+			hasResponseOps = true
+			break
+		}
+	}
+	if !hasResponseOps {
+		logger.Info("Outbound response", "method", method, "path", path, "status", resp.StatusCode, "changes", 0, "reason", "no_on_response_operations", "matched_rules", matchedRuleIndices, "content_type", contentType)
 		return nil
 	}
 
 	// Skip if not JSON
 	if !strings.Contains(contentType, "application/json") {
-		logger.Info("Outbound response", "method", method, "path", path, "status", resp.StatusCode, "changes", 0, "reason", "non_json", "rule_index", ruleIndex, "content_type", contentType)
+		logger.Info("Outbound response", "method", method, "path", path, "status", resp.StatusCode, "changes", 0, "reason", "non_json", "matched_rules", matchedRuleIndices, "content_type", contentType)
 		return nil
 	}
 
@@ -303,7 +317,20 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 		}
 	}
 
-	modified, appliedValues := config.ProcessResponse(data, headers, matchingRule.OpRule, ruleIndex, method, path)
+	anyModified := false
+	appliedValues := make(map[string]any)
+	for i, rule := range matchedRules {
+		if len(rule.OnResponse) == 0 || rule.OpRule == nil {
+			continue
+		}
+		modified, vals := config.ProcessResponse(data, headers, rule.OpRule, matchedRuleIndices[i], method, path)
+		if modified {
+			anyModified = true
+		}
+		for k, v := range vals {
+			appliedValues[k] = v
+		}
+	}
 
 	modifiedBody, err := json.Marshal(data)
 	if err != nil {
@@ -319,11 +346,13 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 		"path", path,
 		"status", resp.StatusCode,
 		"changes", len(appliedValues),
-		"rule_index", ruleIndex,
+	}
+	if len(matchedRuleIndices) > 0 {
+		fields = append(fields, "matched_rules", matchedRuleIndices)
 	}
 	logger.Info("Outbound response", fields...)
 
-	if modified && logger.IsDebug() {
+	if anyModified && logger.IsDebug() {
 		finalBody, _ := json.MarshalIndent(data, "  ", "  ")
 		logger.Debug("Outbound response body", "body", string(finalBody))
 	}
@@ -332,9 +361,16 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 }
 
 // ModifyStreamingResponse processes Server-Sent Events (SSE) line-by-line
-func ModifyStreamingResponse(resp *http.Response, rule *config.Rule, ruleIndex int) error {
+func ModifyStreamingResponse(resp *http.Response, rules []*config.Rule, ruleIndices []int) error {
 	method := resp.Request.Method
 	path := resp.Request.URL.Path
+
+	if len(rules) > 0 && len(ruleIndices) != len(rules) {
+		ruleIndices = make([]int, len(rules))
+		for i := range ruleIndices {
+			ruleIndices[i] = -1
+		}
+	}
 
 	// Create a pipe for streaming transformation
 	pipeReader, pipeWriter := io.Pipe()
@@ -421,9 +457,18 @@ func ModifyStreamingResponse(resp *http.Response, rule *config.Rule, ruleIndex i
 
 			// Apply response transformations
 			modified := false
-			var appliedValues map[string]any
-			if rule != nil && len(rule.OnResponse) > 0 && rule.OpRule != nil {
-				modified, appliedValues = config.ProcessResponse(data, headers, rule.OpRule, ruleIndex, method, path)
+			appliedValues := make(map[string]any)
+			for i, rule := range rules {
+				if rule == nil || len(rule.OnResponse) == 0 || rule.OpRule == nil {
+					continue
+				}
+				changed, vals := config.ProcessResponse(data, headers, rule.OpRule, ruleIndices[i], method, path)
+				if changed {
+					modified = true
+					for k, v := range vals {
+						appliedValues[k] = v
+					}
+				}
 			}
 
 			if logger.IsDebug() && modified {

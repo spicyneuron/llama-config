@@ -80,7 +80,7 @@ func TestModifyStreamingResponse_OllamaFormat(t *testing.T) {
 	rule := rules[0]
 
 	// Apply streaming transformation
-	err := ModifyStreamingResponse(resp, rule, 0)
+	err := ModifyStreamingResponse(resp, []*config.Rule{rule}, []int{0})
 	if err != nil {
 		t.Fatalf("ModifyStreamingResponse failed: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestModifyStreamingResponse_PassThroughNonJSONAndDone(t *testing.T) {
 		},
 	}
 
-	if err := ModifyStreamingResponse(resp, nil, -1); err != nil {
+	if err := ModifyStreamingResponse(resp, nil, nil); err != nil {
 		t.Fatalf("ModifyStreamingResponse failed: %v", err)
 	}
 
@@ -198,7 +198,7 @@ data: keep-alive
 	rule := rules[0]
 
 	// Apply streaming transformation (should pass through)
-	err := ModifyStreamingResponse(resp, rule, 0)
+	err := ModifyStreamingResponse(resp, []*config.Rule{rule}, []int{0})
 	if err != nil {
 		t.Fatalf("ModifyStreamingResponse failed: %v", err)
 	}
