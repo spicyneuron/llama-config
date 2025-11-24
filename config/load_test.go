@@ -745,6 +745,136 @@ rules:
 	}
 }
 
+func TestLoadOperationIncludesAreExpanded(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	requestOps := filepath.Join(tmpDir, "request_ops.yml")
+	if err := os.WriteFile(requestOps, []byte(`
+- merge:
+    marker: "request-include"
+- delete:
+    - drop_me
+`), 0644); err != nil {
+		t.Fatalf("Failed to write request ops include: %v", err)
+	}
+
+	responseOps := filepath.Join(tmpDir, "response_ops.yml")
+	if err := os.WriteFile(responseOps, []byte(`
+- default:
+    marker: "response-include"
+`), 0644); err != nil {
+		t.Fatalf("Failed to write response ops include: %v", err)
+	}
+
+	configPath := filepath.Join(tmpDir, "main.yml")
+	configContent := fmt.Sprintf(`
+proxy:
+  listen: "localhost:8081"
+  target: "http://localhost:8080"
+
+rules:
+  - methods: POST
+    paths: ^/chat$
+    on_request:
+      - include: %s
+    on_response:
+      - include: %s
+`, filepath.Base(requestOps), filepath.Base(responseOps))
+
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	cfg, watched, err := Load([]string{configPath}, CliOverrides{})
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+
+	if got := cfg.Rules[0].OnRequest; len(got) != 2 {
+		t.Fatalf("expected two request operations from include, got %d", len(got))
+	} else {
+		if got[0].Merge["marker"] != "request-include" {
+			t.Fatalf("expected merged marker from include, got %+v", got[0].Merge)
+		}
+		if len(got[1].Delete) != 1 || got[1].Delete[0] != "drop_me" {
+			t.Fatalf("expected delete from include, got %+v", got[1].Delete)
+		}
+	}
+
+	if got := cfg.Rules[0].OnResponse; len(got) != 1 {
+		t.Fatalf("expected one response operation from include, got %d", len(got))
+	} else if got[0].Default["marker"] != "response-include" {
+		t.Fatalf("expected default marker from include, got %+v", got[0].Default)
+	}
+
+	containsBase := func(paths []string, target string) bool {
+		base := filepath.Base(target)
+		for _, p := range paths {
+			if filepath.Base(p) == base {
+				return true
+			}
+		}
+		return false
+	}
+
+	if !containsBase(watched, requestOps) || !containsBase(watched, responseOps) {
+		t.Fatalf("expected includes to be watched, got %v", watched)
+	}
+}
+
+func TestLoadOperationIncludesFromMappingStyle(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	requestOps := filepath.Join(tmpDir, "request_ops.yml")
+	if err := os.WriteFile(requestOps, []byte(`
+- stop: true
+  merge:
+    marker: "from-request-mapping"
+`), 0644); err != nil {
+		t.Fatalf("Failed to write request ops include: %v", err)
+	}
+
+	responseOps := filepath.Join(tmpDir, "response_ops.yml")
+	if err := os.WriteFile(responseOps, []byte(`
+- merge:
+    marker: "from-response-mapping"
+`), 0644); err != nil {
+		t.Fatalf("Failed to write response ops include: %v", err)
+	}
+
+	configPath := filepath.Join(tmpDir, "main.yml")
+	configContent := fmt.Sprintf(`
+proxy:
+  listen: "localhost:8081"
+  target: "http://localhost:8080"
+
+rules:
+  - methods: POST
+    paths: ^/chat$
+    on_request:
+      include: %s
+    on_response:
+      include: %s
+`, filepath.Base(requestOps), filepath.Base(responseOps))
+
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	cfg, _, err := Load([]string{configPath}, CliOverrides{})
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+
+	if got := cfg.Rules[0].OnRequest; len(got) != 1 || !got[0].Stop || got[0].Merge["marker"] != "from-request-mapping" {
+		t.Fatalf("expected stop operation from mapping-style include, got %+v", got)
+	}
+
+	if got := cfg.Rules[0].OnResponse; len(got) != 1 || got[0].Merge["marker"] != "from-response-mapping" {
+		t.Fatalf("expected merge from response mapping include, got %+v", got)
+	}
+}
+
 func TestLoadIncludeMissingFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	configContent := `

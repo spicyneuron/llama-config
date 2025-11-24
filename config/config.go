@@ -301,6 +301,19 @@ func expandIncludes(node *yaml.Node, baseDir string, watchedFiles *[]string) err
 				return expandIncludes(node, baseDir, watchedFiles)
 			}
 
+			// Allow include as the value of a mapping (e.g., on_request: { include: file.yml })
+			if val.Kind == yaml.MappingNode && isIncludeNode(val) {
+				included, err := loadIncludeNode(val.Content[1], baseDir, watchedFiles)
+				if err != nil {
+					return err
+				}
+				node.Content[i+1] = included
+				if err := expandIncludes(included, baseDir, watchedFiles); err != nil {
+					return err
+				}
+				continue
+			}
+
 			if err := expandIncludes(val, baseDir, watchedFiles); err != nil {
 				return err
 			}
