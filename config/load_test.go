@@ -796,6 +796,42 @@ rules:
 	}
 }
 
+func TestLoadDuplicateListenersAcrossIncludes(t *testing.T) {
+	tmpDir := t.TempDir()
+	include := filepath.Join(tmpDir, "include.yml")
+	base := filepath.Join(tmpDir, "config.yml")
+
+	if err := os.WriteFile(include, []byte(`
+listen: "localhost:8081"
+target: "http://localhost:9001"
+`), 0644); err != nil {
+		t.Fatalf("Failed to write include: %v", err)
+	}
+
+	if err := os.WriteFile(base, []byte(`
+proxy:
+  - listen: "localhost:8081"
+    target: "http://localhost:9000"
+  - include: "include.yml"
+rules:
+  - methods: GET
+    paths: /.*
+    on_request:
+      - merge:
+          ok: true
+`), 0644); err != nil {
+		t.Fatalf("Failed to write base config: %v", err)
+	}
+
+	_, _, err := Load([]string{base}, CliOverrides{})
+	if err == nil {
+		t.Fatal("Load() should fail when duplicate listeners are present across includes")
+	}
+	if !strings.Contains(err.Error(), "duplicated") {
+		t.Fatalf("Expected duplicate listener error, got: %v", err)
+	}
+}
+
 func TestLoadEmpty(t *testing.T) {
 	_, _, err := Load([]string{}, CliOverrides{})
 	if err == nil {

@@ -39,18 +39,51 @@ type ProxyServer struct {
 	config config.ProxyConfig
 }
 
+type fileWatcher interface {
+	Add(name string) error
+	Close() error
+	Events() <-chan fsnotify.Event
+	Errors() <-chan error
+}
+
+type realWatcher struct {
+	*fsnotify.Watcher
+}
+
+func (w *realWatcher) Events() <-chan fsnotify.Event {
+	return w.Watcher.Events
+}
+
+func (w *realWatcher) Errors() <-chan error {
+	return w.Watcher.Errors
+}
+
 var (
 	runningServers []*ProxyServer
 	serversMutex   sync.RWMutex
 	currentConfig  *config.Config
 	watchedFiles   []string
-	configWatcher  *fsnotify.Watcher
+	configWatcher  fileWatcher
 	configPaths    configFiles
 	overrides      config.CliOverrides
 	reloadMutex    sync.Mutex
 	reloadTimer    *time.Timer
 	watcherMutex   sync.Mutex
+	watchFactory   = func() (fileWatcher, error) {
+		w, err := fsnotify.NewWatcher()
+		if err != nil {
+			return nil, err
+		}
+		return &realWatcher{Watcher: w}, nil
+	}
+	startAllProxiesFn func(cfg *config.Config) error = startAllProxies
+	stopAllProxiesFn  func()                         = stopAllProxies
+	reloadConfigFn    func()
 )
+
+func init() {
+	reloadConfigFn = reloadConfig
+}
 
 func main() {
 	var (
@@ -104,7 +137,7 @@ func main() {
 		logger.Info("Loaded config files", "count", len(configPaths), "paths", configPaths)
 	}
 
-	if err := startAllProxies(cfg); err != nil {
+	if err := startAllProxiesFn(cfg); err != nil {
 		logger.Fatal("Failed to start proxies", "err", err)
 	}
 
@@ -277,8 +310,8 @@ func startAllProxies(cfg *config.Config) error {
 	return nil
 }
 
-func setupFileWatcher(watchedFiles []string) (*fsnotify.Watcher, error) {
-	watcher, err := fsnotify.NewWatcher()
+func setupFileWatcher(watchedFiles []string) (fileWatcher, error) {
+	watcher, err := watchFactory()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create watcher: %w", err)
 	}
@@ -320,10 +353,10 @@ func closeWatcher() {
 	}
 }
 
-func watchForChanges(watcher *fsnotify.Watcher) {
+func watchForChanges(watcher fileWatcher) {
 	for {
 		select {
-		case event, ok := <-watcher.Events:
+		case event, ok := <-watcher.Events():
 			if !ok {
 				return
 			}
@@ -331,7 +364,7 @@ func watchForChanges(watcher *fsnotify.Watcher) {
 				logger.Debug("Config file changed", "file", event.Name, "op", event.Op.String())
 				debounceReload()
 			}
-		case err, ok := <-watcher.Errors:
+		case err, ok := <-watcher.Errors():
 			if !ok {
 				return
 			}
@@ -350,7 +383,9 @@ func debounceReload() {
 
 	reloadTimer = time.AfterFunc(200*time.Millisecond, func() {
 		logger.Info("Config file changed, reloading...")
-		reloadConfig()
+		if reloadConfigFn != nil {
+			reloadConfigFn()
+		}
 	})
 }
 
@@ -363,11 +398,11 @@ func reloadConfig() {
 
 	logger.Info("Successfully loaded new config")
 
-	stopAllProxies()
+	stopAllProxiesFn()
 
-	if err := startAllProxies(newCfg); err != nil {
+	if err := startAllProxiesFn(newCfg); err != nil {
 		logger.Error("Failed to start proxies with new config, attempting to restore previous config", "err", err)
-		if err := startAllProxies(currentConfig); err != nil {
+		if err := startAllProxiesFn(currentConfig); err != nil {
 			logger.Fatal("Failed to restore previous config", "err", err)
 		}
 		logger.Info("Restored previous config")
