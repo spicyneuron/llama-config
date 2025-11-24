@@ -33,7 +33,7 @@ rules:
 		t.Fatalf("Failed to write test config: %v", err)
 	}
 
-	cfg, err := Load([]string{configPath}, CliOverrides{})
+	cfg, _, err := Load([]string{configPath}, CliOverrides{})
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
 	}
@@ -85,7 +85,7 @@ rules:
 		Debug:   true,
 	}
 
-	cfg, err := Load([]string{configPath}, overrides)
+	cfg, _, err := Load([]string{configPath}, overrides)
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
 	}
@@ -169,7 +169,7 @@ rules:
 }
 
 func TestLoadInvalidFile(t *testing.T) {
-	_, err := Load([]string{"/nonexistent/config.yml"}, CliOverrides{})
+	_, _, err := Load([]string{"/nonexistent/config.yml"}, CliOverrides{})
 	if err == nil {
 		t.Error("Load() should fail for nonexistent file")
 	}
@@ -422,7 +422,7 @@ rules:
 		t.Fatalf("Failed to write rules config: %v", err)
 	}
 
-	cfg, err := Load([]string{baseConfigPath, rulesConfigPath}, CliOverrides{})
+	cfg, _, err := Load([]string{baseConfigPath, rulesConfigPath}, CliOverrides{})
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
 	}
@@ -482,7 +482,7 @@ rules:
 		t.Fatalf("Failed to write config2: %v", err)
 	}
 
-	cfg, err := Load([]string{config1Path, config2Path}, CliOverrides{})
+	cfg, _, err := Load([]string{config1Path, config2Path}, CliOverrides{})
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
 	}
@@ -521,7 +521,7 @@ rules:
 		t.Fatalf("Failed to write base: %v", err)
 	}
 
-	cfg, err := Load([]string{basePath}, CliOverrides{
+	cfg, _, err := Load([]string{basePath}, CliOverrides{
 		Listen: "localhost:9000",
 		Debug:  true,
 	})
@@ -568,7 +568,7 @@ rules:
 		t.Fatalf("Failed to write config: %v", err)
 	}
 
-	_, err := Load([]string{configPath}, CliOverrides{Listen: "127.0.0.1:9999"})
+	_, _, err := Load([]string{configPath}, CliOverrides{Listen: "127.0.0.1:9999"})
 	if err == nil {
 		t.Fatal("Load() should fail when CLI overrides are used with multiple proxies")
 	}
@@ -625,7 +625,7 @@ rules:
 		configPaths = append(configPaths, path)
 	}
 
-	mergedCfg, err := Load(configPaths, CliOverrides{})
+	mergedCfg, _, err := Load(configPaths, CliOverrides{})
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
 	}
@@ -670,7 +670,7 @@ rules:
 		t.Fatalf("failed to write config: %v", err)
 	}
 
-	cfg, err := Load([]string{configPath}, CliOverrides{})
+	cfg, _, err := Load([]string{configPath}, CliOverrides{})
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -721,7 +721,7 @@ rules:
 		t.Fatalf("Failed to write config: %v", err)
 	}
 
-	cfg, err := Load([]string{configPath}, CliOverrides{})
+	cfg, _, err := Load([]string{configPath}, CliOverrides{})
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
@@ -760,7 +760,7 @@ rules:
 		t.Fatalf("Failed to write config: %v", err)
 	}
 
-	_, err := Load([]string{configPath}, CliOverrides{})
+	_, _, err := Load([]string{configPath}, CliOverrides{})
 	if err == nil || !strings.Contains(err.Error(), "failed to read include file") {
 		t.Fatalf("expected include read error, got %v", err)
 	}
@@ -786,7 +786,7 @@ rules:
 		t.Fatalf("Failed to write valid config: %v", err)
 	}
 
-	_, err := Load([]string{validConfigPath, "nonexistent.yml"}, CliOverrides{})
+	_, _, err := Load([]string{validConfigPath, "nonexistent.yml"}, CliOverrides{})
 	if err == nil {
 		t.Fatal("Load() should fail when one config doesn't exist")
 	}
@@ -797,7 +797,7 @@ rules:
 }
 
 func TestLoadEmpty(t *testing.T) {
-	_, err := Load([]string{}, CliOverrides{})
+	_, _, err := Load([]string{}, CliOverrides{})
 	if err == nil {
 		t.Fatal("Load() should fail with empty config list")
 	}
@@ -831,7 +831,7 @@ rules:
 		t.Fatalf("Failed to chdir: %v", err)
 	}
 
-	cfg, err := Load([]string{configPath}, CliOverrides{
+	cfg, _, err := Load([]string{configPath}, CliOverrides{
 		SSLCert: "certs/cert.pem",
 		SSLKey:  "certs/key.pem",
 	})

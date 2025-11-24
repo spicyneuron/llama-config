@@ -65,7 +65,7 @@ func loadTestConfig(t *testing.T, filename string) *config.Config {
 		return cfg
 	}
 
-	cfg, err := config.Load([]string{path}, config.CliOverrides{
+	cfg, _, err := config.Load([]string{path}, config.CliOverrides{
 		Listen: "localhost:0",
 		Target: "http://localhost:0",
 	})

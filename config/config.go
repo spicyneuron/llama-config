@@ -147,18 +147,27 @@ func (p PatternField) Len() int {
 
 // Load loads and merges one or more config files
 // Later configs override earlier proxy settings, all rules are appended in order
-func Load(configPaths []string, overrides CliOverrides) (*Config, error) {
+// Returns the config, list of watched files (including includes and SSL certs), and error
+func Load(configPaths []string, overrides CliOverrides) (*Config, []string, error) {
 	if len(configPaths) == 0 {
-		return nil, fmt.Errorf("at least one config file required")
+		return nil, nil, fmt.Errorf("at least one config file required")
 	}
 
 	var mergedConfig *Config
+	watchedFiles := make([]string, 0)
 	logger.Info("Loading configuration", "files", len(configPaths))
 
 	for i, configPath := range configPaths {
-		cfg, err := loadConfigFile(configPath)
+		// Add main config file to watched files
+		absPath, err := filepath.Abs(configPath)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse config file %s: %w", configPath, err)
+			absPath = configPath
+		}
+		watchedFiles = append(watchedFiles, absPath)
+
+		cfg, err := loadConfigFile(configPath, &watchedFiles)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to parse config file %s: %w", configPath, err)
 		}
 
 		logger.Debug("Loading config file", "index", i+1, "total", len(configPaths), "path", configPath)
@@ -168,6 +177,14 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, error) {
 		for i := range cfg.Proxies {
 			cfg.Proxies[i].SSLCert = ResolvePath(cfg.Proxies[i].SSLCert, configDir)
 			cfg.Proxies[i].SSLKey = ResolvePath(cfg.Proxies[i].SSLKey, configDir)
+
+			// Add SSL cert/key files to watched files
+			if cfg.Proxies[i].SSLCert != "" {
+				watchedFiles = append(watchedFiles, cfg.Proxies[i].SSLCert)
+			}
+			if cfg.Proxies[i].SSLKey != "" {
+				watchedFiles = append(watchedFiles, cfg.Proxies[i].SSLKey)
+			}
 		}
 
 		if i == 0 {
@@ -182,7 +199,7 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, error) {
 	// Get current working directory for resolving CLI override paths
 	pwd, err := os.Getwd()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get current directory: %w", err)
+		return nil, nil, fmt.Errorf("failed to get current directory: %w", err)
 	}
 
 	// Resolve to a final proxy list (supports either proxy or proxies)
@@ -191,11 +208,11 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, error) {
 		proxies = append(proxies, ProxyConfig{})
 	}
 	if len(proxies) == 0 {
-		return nil, fmt.Errorf("no proxies configured; add a proxy or proxies section")
+		return nil, nil, fmt.Errorf("no proxies configured; add a proxy or proxies section")
 	}
 
 	if len(proxies) > 1 && overridesHasProxyValues(overrides) {
-		return nil, fmt.Errorf("CLI overrides for listen/target/timeout/ssl are only supported with a single proxy; define multiple listeners in the config file instead")
+		return nil, nil, fmt.Errorf("CLI overrides for listen/target/timeout/ssl are only supported with a single proxy; define multiple listeners in the config file instead")
 	}
 
 	for i := range proxies {
@@ -223,11 +240,11 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, error) {
 	logger.Info("Applied CLI overrides", "listen", overrides.Listen, "target", overrides.Target, "timeout", overrides.Timeout, "debug", overrides.Debug)
 
 	if err := Validate(mergedConfig); err != nil {
-		return nil, fmt.Errorf("config validation failed: %w", err)
+		return nil, nil, fmt.Errorf("config validation failed: %w", err)
 	}
 
 	if err := CompileTemplates(mergedConfig); err != nil {
-		return nil, fmt.Errorf("template compilation failed: %w", err)
+		return nil, nil, fmt.Errorf("template compilation failed: %w", err)
 	}
 
 	for i, p := range mergedConfig.Proxies {
@@ -236,10 +253,10 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, error) {
 
 	logger.Info("Configuration ready", "proxies", len(mergedConfig.Proxies), "total_rules", len(mergedConfig.Rules))
 
-	return mergedConfig, nil
+	return mergedConfig, watchedFiles, nil
 }
 
-func loadConfigFile(configPath string) (Config, error) {
+func loadConfigFile(configPath string, watchedFiles *[]string) (Config, error) {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return Config{}, fmt.Errorf("failed to read config file %s: %w", configPath, err)
@@ -250,7 +267,7 @@ func loadConfigFile(configPath string) (Config, error) {
 		return Config{}, fmt.Errorf("failed to parse config file %s: %w", configPath, err)
 	}
 
-	if err := expandIncludes(&root, filepath.Dir(configPath)); err != nil {
+	if err := expandIncludes(&root, filepath.Dir(configPath), watchedFiles); err != nil {
 		return Config{}, err
 	}
 
@@ -262,11 +279,11 @@ func loadConfigFile(configPath string) (Config, error) {
 	return cfg, nil
 }
 
-func expandIncludes(node *yaml.Node, baseDir string) error {
+func expandIncludes(node *yaml.Node, baseDir string, watchedFiles *[]string) error {
 	switch node.Kind {
 	case yaml.DocumentNode:
 		for _, child := range node.Content {
-			if err := expandIncludes(child, baseDir); err != nil {
+			if err := expandIncludes(child, baseDir, watchedFiles); err != nil {
 				return err
 			}
 		}
@@ -276,15 +293,15 @@ func expandIncludes(node *yaml.Node, baseDir string) error {
 			val := node.Content[i+1]
 
 			if key.Value == "include" && len(node.Content) == 2 {
-				included, err := loadIncludeNode(val, baseDir)
+				included, err := loadIncludeNode(val, baseDir, watchedFiles)
 				if err != nil {
 					return err
 				}
 				*node = *included
-				return expandIncludes(node, baseDir)
+				return expandIncludes(node, baseDir, watchedFiles)
 			}
 
-			if err := expandIncludes(val, baseDir); err != nil {
+			if err := expandIncludes(val, baseDir, watchedFiles); err != nil {
 				return err
 			}
 		}
@@ -292,20 +309,20 @@ func expandIncludes(node *yaml.Node, baseDir string) error {
 		var newContent []*yaml.Node
 		for _, item := range node.Content {
 			if isIncludeNode(item) {
-				included, err := loadIncludeNode(item.Content[1], baseDir)
+				included, err := loadIncludeNode(item.Content[1], baseDir, watchedFiles)
 				if err != nil {
 					return err
 				}
 
 				if included.Kind == yaml.SequenceNode {
 					for _, child := range included.Content {
-						if err := expandIncludes(child, baseDir); err != nil {
+						if err := expandIncludes(child, baseDir, watchedFiles); err != nil {
 							return err
 						}
 						newContent = append(newContent, child)
 					}
 				} else {
-					if err := expandIncludes(included, baseDir); err != nil {
+					if err := expandIncludes(included, baseDir, watchedFiles); err != nil {
 						return err
 					}
 					newContent = append(newContent, included)
@@ -313,7 +330,7 @@ func expandIncludes(node *yaml.Node, baseDir string) error {
 				continue
 			}
 
-			if err := expandIncludes(item, baseDir); err != nil {
+			if err := expandIncludes(item, baseDir, watchedFiles); err != nil {
 				return err
 			}
 			newContent = append(newContent, item)
@@ -329,12 +346,20 @@ func isIncludeNode(node *yaml.Node) bool {
 		node.Content[0].Value == "include"
 }
 
-func loadIncludeNode(pathNode *yaml.Node, baseDir string) (*yaml.Node, error) {
+func loadIncludeNode(pathNode *yaml.Node, baseDir string, watchedFiles *[]string) (*yaml.Node, error) {
 	if pathNode.Kind != yaml.ScalarNode {
 		return nil, fmt.Errorf("include path must be a string")
 	}
 
 	includePath := ResolvePath(pathNode.Value, baseDir)
+
+	// Track this included file
+	absPath, err := filepath.Abs(includePath)
+	if err != nil {
+		absPath = includePath
+	}
+	*watchedFiles = append(*watchedFiles, absPath)
+
 	data, err := os.ReadFile(includePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read include file %s: %w", includePath, err)
@@ -345,7 +370,7 @@ func loadIncludeNode(pathNode *yaml.Node, baseDir string) (*yaml.Node, error) {
 		return nil, fmt.Errorf("failed to parse include file %s: %w", includePath, err)
 	}
 
-	if err := expandIncludes(&root, filepath.Dir(includePath)); err != nil {
+	if err := expandIncludes(&root, filepath.Dir(includePath), watchedFiles); err != nil {
 		return nil, err
 	}
 
