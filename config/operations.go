@@ -55,40 +55,32 @@ func ProcessResponse(data map[string]any, headers map[string]string, rule *Compi
 func processOperations(phase string, data map[string]any, headers map[string]string, ruleIndex int, method, path string, operations []OperationExec, templates []*template.Template) (bool, map[string]any) {
 	appliedValues := make(map[string]any)
 	anyApplied := false
+	addedKeys := make([]string, 0)
+	updatedKeys := make([]string, 0)
+	deletedKeys := make([]string, 0)
+	opExecuted := 0
 
 	// Convert body data to strings for pattern matching
 	bodyStrings := toStringMap(data)
 
 	for i, op := range operations {
-		logger.Debug("Operation evaluation", "index", i)
-
-		// Show match conditions
-		hasConditions := len(op.MatchBody) > 0 || len(op.MatchHeaders) > 0
-		if hasConditions {
-			logger.Debug("Operation conditions", "index", i)
-		}
-
 		// Check body matching
 		bodyMatch := true
 		if len(op.MatchBody) > 0 {
 			for key, pattern := range op.MatchBody {
 				actualValue, exists := bodyStrings[key]
 				if !exists {
-					logger.Debug("Body condition failed: key not found", "key", key)
 					bodyMatch = false
 					break
 				}
 				if !pattern.Matches(actualValue) {
-					logger.Debug("Body condition failed: pattern mismatch", "key", key, "value", actualValue, "patterns", pattern.Patterns)
 					bodyMatch = false
 					break
 				}
-				logger.Debug("Body condition matched", "key", key, "value", actualValue, "patterns", pattern.Patterns)
 			}
 		}
 
 		if !bodyMatch {
-			logger.Debug("Operation skipped: body conditions not met", "index", i)
 			continue
 		}
 
@@ -98,21 +90,17 @@ func processOperations(phase string, data map[string]any, headers map[string]str
 			for key, pattern := range op.MatchHeaders {
 				actualValue, exists := headers[key]
 				if !exists {
-					logger.Debug("Header condition failed: header not found", "key", key)
 					headersMatch = false
 					break
 				}
 				if !pattern.Matches(actualValue) {
-					logger.Debug("Header condition failed: pattern mismatch", "key", key, "value", actualValue, "patterns", pattern.Patterns)
 					headersMatch = false
 					break
 				}
-				logger.Debug("Header condition matched", "key", key, "value", actualValue)
 			}
 		}
 
 		if !headersMatch {
-			logger.Debug("Operation skipped: header conditions not met", "index", i)
 			continue
 		}
 
@@ -154,21 +142,21 @@ func processOperations(phase string, data map[string]any, headers map[string]str
 			}
 		}
 
+		opExecuted++
 		// Show changes if any
 		if len(opChanges) > 0 {
 			anyApplied = true
 
 			for key, newValue := range opChanges {
 				if newValue == "<deleted>" {
-					logger.Debug("Operation delete applied", "key", key)
+					deletedKeys = append(deletedKeys, key)
 				} else if oldValue, existed := beforeValues[key]; existed {
-					logger.Debug("Operation update applied", "key", key, "from", oldValue, "to", newValue)
+					_ = oldValue
+					updatedKeys = append(updatedKeys, key)
 				} else {
-					logger.Debug("Operation add applied", "key", key, "value", newValue)
+					addedKeys = append(addedKeys, key)
 				}
 			}
-		} else if len(op.Default) > 0 || len(op.Merge) > 0 || len(op.Delete) > 0 {
-			logger.Debug("Operation produced no changes", "index", i)
 		}
 
 		if op.Stop {
@@ -176,6 +164,11 @@ func processOperations(phase string, data map[string]any, headers map[string]str
 			break
 		}
 	}
+
+	if anyApplied {
+		logger.Debug("Rule applied request changes", "index", ruleIndex, "ops_run", opExecuted, "added", addedKeys, "updated", updatedKeys, "deleted", deletedKeys)
+	}
+
 	return anyApplied, appliedValues
 }
 

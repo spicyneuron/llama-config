@@ -745,6 +745,61 @@ rules:
 	}
 }
 
+func TestLoadMultiProxyRulesFromIncludesOnly(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	sharedRules := `
+- methods: POST
+  paths: ^/included$
+  on_request:
+    - merge:
+        marker: "included"
+`
+	sharedPath := filepath.Join(tmpDir, "shared_rules.yml")
+	if err := os.WriteFile(sharedPath, []byte(sharedRules), 0644); err != nil {
+		t.Fatalf("Failed to write shared rules: %v", err)
+	}
+
+	configContent := fmt.Sprintf(`
+proxy:
+  - listen: "localhost:8081"
+    target: "http://localhost:8080"
+    rules:
+      - include: %s
+
+  - listen: "localhost:8082"
+    target: "http://localhost:8080"
+    rules:
+      - include: %s
+`, sharedPath, sharedPath)
+
+	configPath := filepath.Join(tmpDir, "main.yml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	cfg, _, err := Load([]string{configPath}, CliOverrides{})
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+
+	if len(cfg.Proxies) != 2 {
+		t.Fatalf("expected 2 proxies, got %d", len(cfg.Proxies))
+	}
+	if len(cfg.Rules) != 0 {
+		t.Fatalf("expected 0 shared rules, got %d", len(cfg.Rules))
+	}
+
+	for i := range cfg.Proxies {
+		if len(cfg.Proxies[i].Rules) != 1 {
+			t.Fatalf("proxy %d rules include not expanded, got %d", i, len(cfg.Proxies[i].Rules))
+		}
+		if cfg.Proxies[i].Rules[0].OnRequest[0].Merge["marker"] != "included" {
+			t.Errorf("expected proxy %d rule from include, got %+v", i, cfg.Proxies[i].Rules[0].OnRequest[0].Merge)
+		}
+	}
+}
+
 func TestLoadDeduplicatesWatchedFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 

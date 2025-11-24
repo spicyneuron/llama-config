@@ -131,12 +131,6 @@ func main() {
 	currentConfig = cfg
 	watchedFiles = files
 
-	if len(configPaths) == 1 {
-		logger.Info("Loaded config file", "path", configPaths[0])
-	} else {
-		logger.Info("Loaded config files", "count", len(configPaths), "paths", configPaths)
-	}
-
 	if err := startAllProxiesFn(cfg); err != nil {
 		logger.Fatal("Failed to start proxies", "err", err)
 	}
@@ -149,10 +143,10 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
-	logger.Info("Proxy running, watching for config changes", "watched_files", len(files))
+	logger.Info("Watching for config changes", "watched_files", len(files))
 
 	<-sigCh
-	logger.Info("Received shutdown signal")
+	logger.Info("Shutdown requested", "proxies", len(runningServers))
 	stopAllProxies()
 	logger.Info("Shutdown complete")
 }
@@ -215,7 +209,6 @@ func startProxy(proxyCfg config.ProxyConfig) (*ProxyServer, error) {
 	if proxyCfg.Timeout > 0 {
 		transport.TLSHandshakeTimeout = proxyCfg.Timeout
 		transport.ResponseHeaderTimeout = proxyCfg.Timeout
-		logger.Debug("Transport timeouts", "listen", proxyCfg.Listen, "tls_handshake", proxyCfg.Timeout, "response_header", proxyCfg.Timeout)
 	}
 
 	reverseProxy.Transport = transport
@@ -237,13 +230,21 @@ func startProxy(proxyCfg config.ProxyConfig) (*ProxyServer, error) {
 		config: proxyCfg,
 	}
 
+	// Log start before launching the server goroutine to keep ordering intuitive
+	logListen := proxyCfg.Listen
+	if proxyCfg.SSLCert != "" && proxyCfg.SSLKey != "" {
+		logListen = "https://" + logListen
+		logger.Info("Starting HTTPS proxy", "listen", logListen, "target", proxyCfg.Target)
+	} else {
+		logListen = "http://" + logListen
+		logger.Info("Starting HTTP proxy", "listen", logListen, "target", proxyCfg.Target)
+	}
+
 	go func() {
 		var err error
 		if proxyCfg.SSLCert != "" && proxyCfg.SSLKey != "" {
-			logger.Info("Starting HTTPS proxy", "listen", proxyCfg.Listen, "target", proxyCfg.Target)
 			err = server.ListenAndServeTLS(proxyCfg.SSLCert, proxyCfg.SSLKey)
 		} else {
-			logger.Info("Starting HTTP proxy", "listen", proxyCfg.Listen, "target", proxyCfg.Target)
 			err = server.ListenAndServe()
 		}
 		if err != nil && err != http.ErrServerClosed {
@@ -258,7 +259,7 @@ func stopProxy(ps *ProxyServer) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	logger.Info("Stopping proxy", "listen", ps.config.Listen)
+	logger.Debug("Stopping proxy", "listen", ps.config.Listen)
 	if err := ps.server.Shutdown(ctx); err != nil {
 		logger.Error("Error during proxy shutdown", "listen", ps.config.Listen, "err", err)
 	}
@@ -268,7 +269,7 @@ func stopAllProxies() {
 	serversMutex.Lock()
 	defer serversMutex.Unlock()
 
-	logger.Info("Stopping all proxies", "count", len(runningServers))
+	logger.Info("Stopping proxies", "count", len(runningServers))
 	var wg sync.WaitGroup
 	for _, ps := range runningServers {
 		wg.Add(1)
@@ -297,6 +298,8 @@ func startAllProxies(cfg *config.Config) error {
 	}
 	logger.EnableDebug(debugEnabled)
 
+	logResolvedConfig(cfg)
+
 	for i, proxyCfg := range cfg.Proxies {
 		ps, err := startProxy(proxyCfg)
 		if err != nil {
@@ -306,8 +309,47 @@ func startAllProxies(cfg *config.Config) error {
 		runningServers = append(runningServers, ps)
 	}
 
-	logger.Info("All proxies started", "count", len(runningServers))
+	logger.Debug("All proxies started", "count", len(runningServers))
 	return nil
+}
+
+func logResolvedConfig(cfg *config.Config) {
+	if !logger.IsDebug() {
+		return
+	}
+
+	totalProxyRules := 0
+	sslEnabled := 0
+
+	for i, p := range cfg.Proxies {
+		logListen := p.Listen
+		if p.SSLCert != "" && p.SSLKey != "" {
+			logListen = "https://" + logListen
+		} else {
+			logListen = "http://" + logListen
+		}
+
+		reqOps := 0
+		respOps := 0
+		for _, r := range p.Rules {
+			reqOps += len(r.OnRequest)
+			respOps += len(r.OnResponse)
+		}
+
+		logger.Debug(fmt.Sprintf("Proxy %d configured", i+1),
+			"listen", logListen,
+			"target", p.Target,
+			"timeout", p.Timeout,
+			"rules", len(p.Rules),
+			"request_ops", reqOps,
+			"response_ops", respOps,
+		)
+		totalProxyRules += len(p.Rules)
+		if p.SSLCert != "" && p.SSLKey != "" {
+			sslEnabled++
+		}
+	}
+
 }
 
 func setupFileWatcher(watchedFiles []string) (fileWatcher, error) {

@@ -23,6 +23,24 @@ type responseRuleContext struct {
 	index int
 }
 
+func headersJSON(headers map[string][]string) string {
+	safe := sanitizeHeaders(headers)
+	flattened := make(map[string]any, len(safe))
+	for k, vals := range safe {
+		if len(vals) == 1 {
+			flattened[k] = vals[0]
+		} else {
+			flattened[k] = vals
+		}
+	}
+
+	b, err := json.MarshalIndent(flattened, "", "  ")
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
+}
+
 // FindMatchingRules returns all rules that match the request sequentially
 func FindMatchingRules(req *http.Request, cfg *config.Config) []*config.Rule {
 	logger.Debug("Evaluating rules for request", "rule_count", len(cfg.Rules), "method", req.Method, "path", req.URL.Path)
@@ -69,14 +87,10 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 		}
 	}
 
-	if logger.IsDebug() {
-		logger.Debug("Inbound request", "method", method, "path", path)
+	logger.Info("Inbound request", "method", method, "path", path)
 
-		for key, values := range sanitizeHeaders(req.Header) {
-			for _, value := range values {
-				logger.Debug("Request header", "key", key, "value", value)
-			}
-		}
+	if logger.IsDebug() {
+		logger.Debug("Request headers", "headers", headersJSON(req.Header))
 
 		if len(body) > 0 {
 			safeBody, truncated := sanitizeBody(body, 4096)
@@ -124,16 +138,12 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 		methodMatch := rule.Methods.Matches(req.Method)
 		pathMatch := rule.Paths.Matches(req.URL.Path)
 
-		if logger.IsDebug() {
-			logger.Debug("Rule evaluation", "index", i, "method_match", methodMatch, "path_match", pathMatch, "methods", rule.Methods.Patterns, "paths", rule.Paths.Patterns)
-		}
-
 		if !methodMatch || !pathMatch {
-			if logger.IsDebug() {
-				logger.Debug("Rule skipped", "index", i)
-			}
+			logger.Debug("Rule skipped", "index", i, "methods", rule.Methods.Patterns, "paths", rule.Paths.Patterns)
 			continue
 		}
+
+		logger.Debug("Rule matched", "index", i, "methods", rule.Methods.Patterns, "paths", rule.Paths.Patterns)
 
 		matchedCount++
 		lastMatchedRule = responseRuleContext{rule: rule, index: i}
@@ -142,24 +152,14 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 		// Handle target path rewriting
 		if rule.TargetPath != "" {
 			originalPath := req.URL.Path
-			req.URL.Path = rule.TargetPath
-			if logger.IsDebug() {
-				logger.Debug("Path rewrite applied", "index", i, "from", originalPath, "to", rule.TargetPath)
+			if rule.TargetPath != originalPath {
+				req.URL.Path = rule.TargetPath
+				logger.Debug("Rule path rewrite applied", "index", i, "from", originalPath, "to", rule.TargetPath)
 			}
 		}
 
 		// Skip body processing if no JSON body or no operations
-		if !hasJSONBody {
-			if logger.IsDebug() {
-				logger.Debug("Rule has no JSON body to process", "index", i)
-			}
-			continue
-		}
-
-		if len(rule.OnRequest) == 0 {
-			if logger.IsDebug() {
-				logger.Debug("Rule has no on_request operations", "index", i)
-			}
+		if !hasJSONBody || len(rule.OnRequest) == 0 {
 			continue
 		}
 
@@ -174,17 +174,6 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 			}
 		}
 
-		if logger.IsDebug() {
-			if modified {
-				logger.Debug("Rule applied changes", "index", i, "change_count", len(appliedValues))
-			} else {
-				logger.Debug("Rule made no changes", "index", i)
-			}
-		}
-	}
-
-	if logger.IsDebug() && matchedCount == 0 {
-		logger.Debug("No rules matched request", "method", req.Method, "path", req.URL.Path)
 	}
 
 	// Store the last matching rule in context for response processing
@@ -205,30 +194,17 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 		req.Body = io.NopCloser(bytes.NewReader(modifiedBody))
 		req.ContentLength = int64(len(modifiedBody))
 
+		fields := []any{
+			"method", method,
+			"path", path,
+			"changes", len(allAppliedValues),
+		}
+		if matchedCount > 0 {
+			fields = append(fields, "matched_rules", matchedRuleIndices)
+		}
+		logger.Info("Outbound request", fields...)
+
 		if anyModified && logger.IsDebug() {
-			logger.Debug("Request modifications applied", "changes", len(allAppliedValues))
-
-			for key, value := range allAppliedValues {
-				if value == "<deleted>" {
-					logger.Debug("Request field deleted", "key", key)
-				} else {
-					var originalData map[string]any
-					_ = json.Unmarshal(body, &originalData)
-					if _, existed := originalData[key]; existed {
-						logger.Debug("Request field updated", "key", key, "value", value)
-					} else {
-						logger.Debug("Request field added", "key", key, "value", value)
-					}
-				}
-			}
-
-			if matchedCount > 0 {
-				logger.Debug("Request rule summary", "method", req.Method, "path", req.URL.Path, "matched_rules", matchedRuleIndices, "changes", len(allAppliedValues))
-			}
-			if matchedCount == 0 {
-				logger.Debug("Request matched no rules", "method", req.Method, "path", req.URL.Path)
-			}
-
 			finalBody, _ := json.MarshalIndent(data, "  ", "  ")
 			logger.Debug("Outbound request body", "body", string(finalBody))
 		}
@@ -243,7 +219,6 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 	method := resp.Request.Method
 	path := resp.Request.URL.Path
 	contentType := resp.Header.Get("Content-Type")
-	logger.Debug("Processing response", "status", resp.StatusCode, "content_type", contentType)
 
 	// Get the rule from context (may be nil)
 	var matchingRule *config.Rule
@@ -261,16 +236,12 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 	// Route to streaming handler if SSE (log events even without on_response operations)
 	if strings.Contains(contentType, "text/event-stream") {
 		if matchingRule == nil || len(matchingRule.OnResponse) == 0 {
-			logger.Info("Streaming response (no on_response operations)", "method", method, "path", path, "status", resp.StatusCode, "content_type", contentType)
+			logger.Info("Streaming response", "method", method, "path", path, "status", resp.StatusCode, "content_type", contentType)
 		} else {
-			logger.Info("Streaming response with transformations", "method", method, "path", path, "status", resp.StatusCode, "content_type", contentType, "rule_index", ruleIndex)
+			logger.Info("Streaming response", "method", method, "path", path, "status", resp.StatusCode, "content_type", contentType, "rule_index", ruleIndex)
 		}
 		if logger.IsDebug() {
-			for key, values := range sanitizeHeaders(resp.Header) {
-				for _, value := range values {
-					logger.Debug("Streaming response header", "key", key, "value", value)
-				}
-			}
+			logger.Debug("Streaming response headers", "headers", headersJSON(resp.Header))
 		}
 		return ModifyStreamingResponse(resp, matchingRule, ruleIndex)
 	}
@@ -286,11 +257,7 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 	if logger.IsDebug() {
 		logger.Debug("Inbound response", "status", resp.StatusCode, "status_text", resp.Status)
 
-		for key, values := range sanitizeHeaders(resp.Header) {
-			for _, value := range values {
-				logger.Debug("Response header", "key", key, "value", value)
-			}
-		}
+		logger.Debug("Response headers", "headers", headersJSON(resp.Header))
 
 		if len(body) > 0 {
 			safeBody, truncated := sanitizeBody(body, 4096)
@@ -305,22 +272,19 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 	resp.ContentLength = int64(len(body))
 
 	if matchingRule == nil {
-		logger.Info("Response skipped: no matching rule", "method", method, "path", path, "status", resp.StatusCode, "content_type", contentType)
-		logger.Debug("No matching rule in context for response")
+		logger.Info("Outbound response", "method", method, "path", path, "status", resp.StatusCode, "changes", 0, "reason", "no_matching_rule", "content_type", contentType)
 		return nil
 	}
 
 	// Skip if no response operations
 	if len(matchingRule.OnResponse) == 0 {
-		logger.Info("Response skipped: no on_response operations", "method", method, "path", path, "status", resp.StatusCode, "content_type", contentType)
-		logger.Debug("No response operations defined for this rule")
+		logger.Info("Outbound response", "method", method, "path", path, "status", resp.StatusCode, "changes", 0, "reason", "no_on_response_operations", "rule_index", ruleIndex, "content_type", contentType)
 		return nil
 	}
 
 	// Skip if not JSON
 	if !strings.Contains(contentType, "application/json") {
-		logger.Info("Response skipped: non-JSON content type", "method", method, "path", path, "status", resp.StatusCode, "content_type", contentType)
-		logger.Debug("Skipping response modification (not JSON)")
+		logger.Info("Outbound response", "method", method, "path", path, "status", resp.StatusCode, "changes", 0, "reason", "non_json", "rule_index", ruleIndex, "content_type", contentType)
 		return nil
 	}
 
@@ -339,10 +303,6 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 		}
 	}
 
-	if logger.IsDebug() {
-		logger.Debug("Processing response operations")
-	}
-
 	modified, appliedValues := config.ProcessResponse(data, headers, matchingRule.OpRule, ruleIndex, method, path)
 
 	modifiedBody, err := json.Marshal(data)
@@ -354,28 +314,16 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 	resp.Body = io.NopCloser(bytes.NewReader(modifiedBody))
 	resp.ContentLength = int64(len(modifiedBody))
 
-	if modified {
-		logger.Info("Response transformed", "method", method, "path", path, "status", resp.StatusCode, "changes", len(appliedValues), "rule_index", ruleIndex)
-	} else {
-		logger.Info("Response unchanged after on_response", "method", method, "path", path, "status", resp.StatusCode, "rule_index", ruleIndex)
+	fields := []any{
+		"method", method,
+		"path", path,
+		"status", resp.StatusCode,
+		"changes", len(appliedValues),
+		"rule_index", ruleIndex,
 	}
+	logger.Info("Outbound response", fields...)
 
 	if modified && logger.IsDebug() {
-		logger.Debug("Response modifications applied", "changes", len(appliedValues))
-
-		var originalData map[string]any
-		_ = json.Unmarshal(body, &originalData)
-
-		for key, value := range appliedValues {
-			if value == "<deleted>" {
-				logger.Debug("Response field deleted", "key", key)
-			} else if _, existed := originalData[key]; existed {
-				logger.Debug("Response field updated", "key", key, "value", value)
-			} else {
-				logger.Debug("Response field added", "key", key, "value", value)
-			}
-		}
-
 		finalBody, _ := json.MarshalIndent(data, "  ", "  ")
 		logger.Debug("Outbound response body", "body", string(finalBody))
 	}

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/spicyneuron/llama-config-proxy/logger"
@@ -177,9 +178,11 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, []string, erro
 		return nil, nil, fmt.Errorf("at least one config file required")
 	}
 
-	var mergedConfig *Config
+	var (
+		mergedConfig *Config
+		loadFields   []any
+	)
 	watchedFiles := newWatchList()
-	logger.Info("Loading configuration", "files", len(configPaths))
 
 	for i, configPath := range configPaths {
 		// Add main config file to watched files
@@ -218,6 +221,14 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, []string, erro
 			mergedConfig.Rules = append(mergedConfig.Rules, cfg.Rules...)
 			logger.Debug("Merged config file", "path", configPath, "proxies_added", len(cfg.Proxies), "rules_added", len(cfg.Rules))
 		}
+
+		loadFields = append(loadFields, fmt.Sprintf("config_%d", i+1), configPath)
+	}
+
+	if len(configPaths) == 1 {
+		logger.Info("Loaded 1 config file", "path", configPaths[0])
+	} else {
+		logger.Info(fmt.Sprintf("Loaded %d config files", len(configPaths)), "paths", strings.Join(configPaths, ", "))
 	}
 
 	// Get current working directory for resolving CLI override paths
@@ -261,7 +272,28 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, []string, erro
 
 	mergedConfig.Proxies = proxies
 
-	logger.Info("Applied CLI overrides", "listen", overrides.Listen, "target", overrides.Target, "timeout", overrides.Timeout, "debug", overrides.Debug)
+	var overrideFields []any
+	if overrides.Listen != "" {
+		overrideFields = append(overrideFields, "listen", overrides.Listen)
+	}
+	if overrides.Target != "" {
+		overrideFields = append(overrideFields, "target", overrides.Target)
+	}
+	if overrides.Timeout > 0 {
+		overrideFields = append(overrideFields, "timeout", overrides.Timeout)
+	}
+	if overrides.SSLCert != "" {
+		overrideFields = append(overrideFields, "ssl_cert", overrides.SSLCert)
+	}
+	if overrides.SSLKey != "" {
+		overrideFields = append(overrideFields, "ssl_key", overrides.SSLKey)
+	}
+	if overrides.Debug {
+		overrideFields = append(overrideFields, "debug", overrides.Debug)
+	}
+	if len(overrideFields) > 0 {
+		logger.Debug("Applied CLI overrides", overrideFields...)
+	}
 
 	if err := Validate(mergedConfig); err != nil {
 		return nil, nil, fmt.Errorf("config validation failed: %w", err)
@@ -270,12 +302,6 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, []string, erro
 	if err := CompileTemplates(mergedConfig); err != nil {
 		return nil, nil, fmt.Errorf("template compilation failed: %w", err)
 	}
-
-	for i, p := range mergedConfig.Proxies {
-		logger.Info("Proxy configured", "index", i, "listen", p.Listen, "target", p.Target, "rules", len(p.Rules), "timeout", p.Timeout, "ssl_cert", p.SSLCert != "")
-	}
-
-	logger.Info("Configuration ready", "proxies", len(mergedConfig.Proxies), "total_rules", len(mergedConfig.Rules))
 
 	return mergedConfig, watchedFiles.Paths(), nil
 }
