@@ -18,12 +18,11 @@ This lightweight proxy sits between your LLM clients and servers, automatically 
 # Install to $GOPATH/bin
 go install github.com/spicyneuron/llama-config-proxy@latest
 
-# Grab the latest examples
-curl -L https://github.com/spicyneuron/llama-config-proxy/archive/refs/heads/main.tar.gz \
-  | tar -xz --strip-components=1 llama-config-proxy-main/examples
+# Grab the single example config
+curl -L -o example.config.yml https://raw.githubusercontent.com/spicyneuron/llama-config-proxy/main/examples/example.config.yml
 
-# Start with the combined example (point it at your backend target)
-llama-config-proxy --config examples/combined.yml
+# Start with the example config (point it at your backend target)
+llama-config-proxy --config example.config.yml
 ```
 
 ## Configuration & Behavior
@@ -46,7 +45,7 @@ Start from `examples/example.config.yml` for an annotated, OpenAI-compatible cha
 
 ```sh
 # Run
-go run main.go --config examples/combined.yml
+go run main.go --config examples/example.config.yml
 
 # Test
 go test ./...
