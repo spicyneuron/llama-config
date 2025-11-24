@@ -17,6 +17,30 @@ type Config struct {
 	Rules   []Rule       `yaml:"rules"`
 }
 
+type watchList struct {
+	paths []string
+	seen  map[string]struct{}
+}
+
+func newWatchList() *watchList {
+	return &watchList{paths: make([]string, 0), seen: make(map[string]struct{})}
+}
+
+func (w *watchList) Add(path string) {
+	if path == "" {
+		return
+	}
+	if _, ok := w.seen[path]; ok {
+		return
+	}
+	w.seen[path] = struct{}{}
+	w.paths = append(w.paths, path)
+}
+
+func (w *watchList) Paths() []string {
+	return w.paths
+}
+
 // ProxyConfig contains proxy-level settings
 type ProxyConfig struct {
 	Listen  string        `yaml:"listen"`
@@ -154,7 +178,7 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, []string, erro
 	}
 
 	var mergedConfig *Config
-	watchedFiles := make([]string, 0)
+	watchedFiles := newWatchList()
 	logger.Info("Loading configuration", "files", len(configPaths))
 
 	for i, configPath := range configPaths {
@@ -163,9 +187,9 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, []string, erro
 		if err != nil {
 			absPath = configPath
 		}
-		watchedFiles = append(watchedFiles, absPath)
+		watchedFiles.Add(absPath)
 
-		cfg, err := loadConfigFile(configPath, &watchedFiles)
+		cfg, err := loadConfigFile(configPath, watchedFiles)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to parse config file %s: %w", configPath, err)
 		}
@@ -180,10 +204,10 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, []string, erro
 
 			// Add SSL cert/key files to watched files
 			if cfg.Proxies[i].SSLCert != "" {
-				watchedFiles = append(watchedFiles, cfg.Proxies[i].SSLCert)
+				watchedFiles.Add(cfg.Proxies[i].SSLCert)
 			}
 			if cfg.Proxies[i].SSLKey != "" {
-				watchedFiles = append(watchedFiles, cfg.Proxies[i].SSLKey)
+				watchedFiles.Add(cfg.Proxies[i].SSLKey)
 			}
 		}
 
@@ -253,10 +277,10 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, []string, erro
 
 	logger.Info("Configuration ready", "proxies", len(mergedConfig.Proxies), "total_rules", len(mergedConfig.Rules))
 
-	return mergedConfig, watchedFiles, nil
+	return mergedConfig, watchedFiles.Paths(), nil
 }
 
-func loadConfigFile(configPath string, watchedFiles *[]string) (Config, error) {
+func loadConfigFile(configPath string, watchedFiles *watchList) (Config, error) {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return Config{}, fmt.Errorf("failed to read config file %s: %w", configPath, err)
@@ -279,7 +303,7 @@ func loadConfigFile(configPath string, watchedFiles *[]string) (Config, error) {
 	return cfg, nil
 }
 
-func expandIncludes(node *yaml.Node, baseDir string, watchedFiles *[]string) error {
+func expandIncludes(node *yaml.Node, baseDir string, watchedFiles *watchList) error {
 	switch node.Kind {
 	case yaml.DocumentNode:
 		for _, child := range node.Content {
@@ -359,7 +383,7 @@ func isIncludeNode(node *yaml.Node) bool {
 		node.Content[0].Value == "include"
 }
 
-func loadIncludeNode(pathNode *yaml.Node, baseDir string, watchedFiles *[]string) (*yaml.Node, error) {
+func loadIncludeNode(pathNode *yaml.Node, baseDir string, watchedFiles *watchList) (*yaml.Node, error) {
 	if pathNode.Kind != yaml.ScalarNode {
 		return nil, fmt.Errorf("include path must be a string")
 	}
@@ -371,7 +395,7 @@ func loadIncludeNode(pathNode *yaml.Node, baseDir string, watchedFiles *[]string
 	if err != nil {
 		absPath = includePath
 	}
-	*watchedFiles = append(*watchedFiles, absPath)
+	watchedFiles.Add(absPath)
 
 	data, err := os.ReadFile(includePath)
 	if err != nil {

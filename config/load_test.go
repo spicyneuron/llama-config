@@ -745,6 +745,58 @@ rules:
 	}
 }
 
+func TestLoadDeduplicatesWatchedFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	sharedRules := `
+- methods: GET
+  paths: /.*
+  on_request:
+    - merge:
+        marker: "shared"
+`
+	sharedPath := filepath.Join(tmpDir, "shared_rules.yml")
+	if err := os.WriteFile(sharedPath, []byte(sharedRules), 0644); err != nil {
+		t.Fatalf("Failed to write shared rules: %v", err)
+	}
+
+	configContent := fmt.Sprintf(`
+proxy:
+  listen: "localhost:8081"
+  target: "http://localhost:8080"
+
+rules:
+  - include: %s
+  - include: %s
+`, sharedPath, sharedPath)
+
+	configPath := filepath.Join(tmpDir, "main.yml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	_, watched, err := Load([]string{configPath}, CliOverrides{})
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+
+	if got, want := len(watched), 2; got != want {
+		t.Fatalf("expected unique watched files for config and include, got %d: %v", got, watched)
+	}
+
+	counts := make(map[string]int)
+	for _, p := range watched {
+		counts[filepath.Base(p)]++
+	}
+
+	if counts[filepath.Base(sharedPath)] != 1 {
+		t.Fatalf("expected shared include to be watched once, got counts %v", counts)
+	}
+	if counts[filepath.Base(configPath)] != 1 {
+		t.Fatalf("expected config file to be watched once, got counts %v", counts)
+	}
+}
+
 func TestLoadOperationIncludesAreExpanded(t *testing.T) {
 	tmpDir := t.TempDir()
 
