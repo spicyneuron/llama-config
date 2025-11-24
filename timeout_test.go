@@ -10,11 +10,11 @@ import (
 
 func TestCreateServerTimeouts(t *testing.T) {
 	tests := []struct {
-		name        string
-		timeout     time.Duration
-		wantIdle    time.Duration
-		wantRead    time.Duration
-		wantWrite   time.Duration
+		name      string
+		timeout   time.Duration
+		wantIdle  time.Duration
+		wantRead  time.Duration
+		wantWrite time.Duration
 	}{
 		{
 			name:      "zero timeout",
@@ -65,3 +65,14 @@ func TestCreateServerTimeouts(t *testing.T) {
 	}
 }
 
+func TestCreateServerWithoutTLSConfig(t *testing.T) {
+	cfg := config.ProxyConfig{
+		Listen: "localhost:8080",
+		Target: "http://localhost:3000",
+	}
+
+	server := CreateServer(cfg, http.NewServeMux())
+	if server.TLSConfig != nil {
+		t.Fatalf("Expected TLSConfig to be nil when no cert/key provided")
+	}
+}

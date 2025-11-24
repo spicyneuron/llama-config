@@ -117,3 +117,27 @@ func TestProcessResponseHeaderFilter(t *testing.T) {
 		t.Fatalf("expected tag merge on case-insensitive match, got %v", body["tag"])
 	}
 }
+
+func TestTemplateIndexErrorPaths(t *testing.T) {
+	slice := []any{"a"}
+	if val := templateIndex(slice, 5); val != nil {
+		t.Fatalf("expected nil for out-of-bounds index, got %v", val)
+	}
+	if val := templateIndex(map[string]any{"x": 1}, "missing"); val != nil {
+		t.Fatalf("expected nil for missing map key, got %v", val)
+	}
+	if val := templateIndex("not-iterable", 0); val != nil {
+		t.Fatalf("expected nil for unsupported type, got %v", val)
+	}
+	if val := templateIndex(slice, "bad"); val != nil {
+		t.Fatalf("expected nil for non-numeric index, got %v", val)
+	}
+}
+
+func TestDictHelperOddArgs(t *testing.T) {
+	dictFn := TemplateFuncs["dict"].(func(...any) map[string]any)
+	result := dictFn("a", 1, "b") // odd number of args should not panic
+	if len(result) != 0 {
+		t.Fatalf("expected empty map on odd args, got %v", result)
+	}
+}

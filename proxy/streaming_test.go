@@ -219,6 +219,46 @@ func TestModifyStreamingResponse_OllamaFormat(t *testing.T) {
 	}
 }
 
+func TestModifyStreamingResponse_PassThroughNonJSONAndDone(t *testing.T) {
+	resp := &http.Response{
+		StatusCode: 200,
+		Header: http.Header{
+			"Content-Type": []string{"text/event-stream"},
+		},
+		Body: io.NopCloser(strings.NewReader("data: notjson\n\ndata: [DONE]\n")),
+		Request: &http.Request{
+			Method: "GET",
+			URL:    mustParseURL("/sse"),
+		},
+	}
+
+	if err := ModifyStreamingResponse(resp, nil, -1); err != nil {
+		t.Fatalf("ModifyStreamingResponse failed: %v", err)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		t.Fatalf("Failed to read body: %v", err)
+	}
+	rawLines := strings.Split(string(body), "\n")
+	var lines []string
+	for _, l := range rawLines {
+		if strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 non-empty lines, got %d: %v", len(lines), lines)
+	}
+	if lines[0] != "data: notjson" {
+		t.Fatalf("expected non-JSON line to pass through, got %q", lines[0])
+	}
+	if lines[1] != "data: [DONE]" {
+		t.Fatalf("expected [DONE] marker to be preserved, got %q", lines[1])
+	}
+}
+
 func TestModifyStreamingResponse_PassthroughNonJSON(t *testing.T) {
 	cfg := &config.Config{
 		Proxies: []config.ProxyConfig{{
