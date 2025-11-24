@@ -44,10 +44,12 @@ var (
 	serversMutex   sync.RWMutex
 	currentConfig  *config.Config
 	watchedFiles   []string
+	configWatcher  *fsnotify.Watcher
 	configPaths    configFiles
 	overrides      config.CliOverrides
 	reloadMutex    sync.Mutex
 	reloadTimer    *time.Timer
+	watcherMutex   sync.Mutex
 )
 
 func main() {
@@ -106,13 +108,10 @@ func main() {
 		logger.Fatal("Failed to start proxies", "err", err)
 	}
 
-	watcher, err := setupFileWatcher(files)
-	if err != nil {
+	if err := setWatcher(files); err != nil {
 		logger.Fatal("Failed to setup file watcher", "err", err)
 	}
-	defer watcher.Close()
-
-	go watchForChanges(watcher)
+	defer closeWatcher()
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
@@ -295,6 +294,32 @@ func setupFileWatcher(watchedFiles []string) (*fsnotify.Watcher, error) {
 	return watcher, nil
 }
 
+func setWatcher(files []string) error {
+	watcherMutex.Lock()
+	defer watcherMutex.Unlock()
+
+	if configWatcher != nil {
+		configWatcher.Close()
+	}
+
+	watcher, err := setupFileWatcher(files)
+	if err != nil {
+		return err
+	}
+	configWatcher = watcher
+	go watchForChanges(watcher)
+	return nil
+}
+
+func closeWatcher() {
+	watcherMutex.Lock()
+	defer watcherMutex.Unlock()
+
+	if configWatcher != nil {
+		configWatcher.Close()
+	}
+}
+
 func watchForChanges(watcher *fsnotify.Watcher) {
 	for {
 		select {
@@ -351,5 +376,10 @@ func reloadConfig() {
 
 	currentConfig = newCfg
 	watchedFiles = newFiles
+
+	if err := setWatcher(newFiles); err != nil {
+		logger.Error("Failed to update file watcher after reload", "err", err)
+	}
+
 	logger.Info("Config reloaded successfully", "proxies", len(newCfg.Proxies), "watched_files", len(newFiles))
 }
