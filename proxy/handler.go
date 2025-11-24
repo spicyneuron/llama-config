@@ -220,12 +220,13 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 						logger.Debug("Request field added", "key", key, "value", value)
 					}
 				}
+			}
 
-				if matchedCount > 0 {
-					logger.Info("Request rule summary", "method", req.Method, "path", req.URL.Path, "matched_rules", matchedRuleIndices, "changes", len(allAppliedValues))
-				} else {
-					logger.Info("Request matched no rules", "method", req.Method, "path", req.URL.Path)
-				}
+			if matchedCount > 0 {
+				logger.Debug("Request rule summary", "method", req.Method, "path", req.URL.Path, "matched_rules", matchedRuleIndices, "changes", len(allAppliedValues))
+			}
+			if matchedCount == 0 {
+				logger.Debug("Request matched no rules", "method", req.Method, "path", req.URL.Path)
 			}
 
 			finalBody, _ := json.MarshalIndent(data, "  ", "  ")
