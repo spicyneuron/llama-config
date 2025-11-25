@@ -15,7 +15,7 @@ import (
 // Config represents the full proxy configuration
 type Config struct {
 	Proxies ProxyEntries `yaml:"proxy"`
-	Rules   []Rule       `yaml:"rules"`
+	Routes  []Route      `yaml:"routes"`
 }
 
 type watchList struct {
@@ -50,7 +50,7 @@ type ProxyConfig struct {
 	SSLCert string        `yaml:"ssl_cert"`
 	SSLKey  string        `yaml:"ssl_key"`
 	Debug   bool          `yaml:"debug"`
-	Rules   []Rule        `yaml:"rules"`
+	Routes  []Route       `yaml:"routes"`
 }
 
 // ProxyEntries allows proxy to be defined as a single map or a list
@@ -90,21 +90,21 @@ type CliOverrides struct {
 	Debug   bool
 }
 
-// Rule defines matching criteria and operations with compiled templates
-type Rule struct {
+// Route defines matching criteria and operations with compiled templates
+type Route struct {
 	Methods    PatternField `yaml:"methods"`
 	Paths      PatternField `yaml:"paths"`
 	TargetPath string       `yaml:"target_path"`
 
-	OnRequest  []Operation `yaml:"on_request,omitempty"`
-	OnResponse []Operation `yaml:"on_response,omitempty"`
+	OnRequest  []Action `yaml:"on_request,omitempty"`
+	OnResponse []Action `yaml:"on_response,omitempty"`
 
 	// Compiled templates (not serialized)
-	OpRule *CompiledRule `yaml:"-"`
+	Compiled *CompiledRoute `yaml:"-"`
 }
 
-// Operation defines a transformation to apply
-type Operation struct {
+// Action defines a transformation to apply
+type Action struct {
 	// Matching criteria
 	MatchBody    map[string]PatternField `yaml:"match_body,omitempty"`
 	MatchHeaders map[string]PatternField `yaml:"match_headers,omitempty"`
@@ -171,7 +171,7 @@ func (p PatternField) Len() int {
 }
 
 // Load loads and merges one or more config files
-// Later configs override earlier proxy settings, all rules are appended in order
+// Later configs override earlier proxy settings, all routes are appended in order
 // Returns the config, list of watched files (including includes and SSL certs), and error
 func Load(configPaths []string, overrides CliOverrides) (*Config, []string, error) {
 	if len(configPaths) == 0 {
@@ -218,8 +218,8 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, []string, erro
 			mergedConfig = &cfg
 		} else {
 			mergedConfig.Proxies = append(mergedConfig.Proxies, cfg.Proxies...)
-			mergedConfig.Rules = append(mergedConfig.Rules, cfg.Rules...)
-			logger.Debug("Merged config file", "path", configPath, "proxies_added", len(cfg.Proxies), "rules_added", len(cfg.Rules))
+			mergedConfig.Routes = append(mergedConfig.Routes, cfg.Routes...)
+			logger.Debug("Merged config file", "path", configPath, "proxies_added", len(cfg.Proxies), "routes_added", len(cfg.Routes))
 		}
 
 		loadFields = append(loadFields, fmt.Sprintf("config_%d", i+1), configPath)
@@ -264,9 +264,9 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, []string, erro
 			logger.Debug("Using default timeout for proxy", "index", i, "timeout", proxies[i].Timeout)
 		}
 
-		// If proxy has no rules, inherit shared rules
-		if len(proxies[i].Rules) == 0 && len(mergedConfig.Rules) > 0 {
-			proxies[i].Rules = append([]Rule(nil), mergedConfig.Rules...)
+		// If proxy has no routes, inherit shared routes
+		if len(proxies[i].Routes) == 0 && len(mergedConfig.Routes) > 0 {
+			proxies[i].Routes = append([]Route(nil), mergedConfig.Routes...)
 		}
 	}
 

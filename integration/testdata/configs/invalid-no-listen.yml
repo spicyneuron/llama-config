@@ -1,7 +1,7 @@
 proxy:
   target: "http://localhost:8080"
 
-rules:
+routes:
   - methods: POST
     paths: /v1/chat
     on_request:

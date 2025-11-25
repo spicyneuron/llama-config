@@ -13,16 +13,16 @@ import (
 	"github.com/spicyneuron/llama-matchmaker/logger"
 )
 
-// CompiledRule holds a rule with compiled templates
-type CompiledRule struct {
-	OnRequest           []OperationExec
-	OnResponse          []OperationExec
+// CompiledRoute holds a route with compiled templates
+type CompiledRoute struct {
+	OnRequest           []ActionExec
+	OnResponse          []ActionExec
 	OnRequestTemplates  []*template.Template
 	OnResponseTemplates []*template.Template
 }
 
-// OperationExec represents an operation during execution (converted from Operation)
-type OperationExec struct {
+// ActionExec represents an action during execution (converted from Action)
+type ActionExec struct {
 	MatchBody    map[string]PatternField
 	MatchHeaders map[string]PatternField
 	Template     string
@@ -41,18 +41,18 @@ func toStringMap(data map[string]any) map[string]string {
 	return result
 }
 
-// ProcessRequest applies all request operations to data
-func ProcessRequest(data map[string]any, headers map[string]string, rule *CompiledRule, ruleIndex int, method, path string) (bool, map[string]any) {
-	return processOperations("request", data, headers, ruleIndex, method, path, rule.OnRequest, rule.OnRequestTemplates)
+// ProcessRequest applies all request actions to data
+func ProcessRequest(data map[string]any, headers map[string]string, route *CompiledRoute, ruleIndex int, method, path string) (bool, map[string]any) {
+	return processActions("request", data, headers, ruleIndex, method, path, route.OnRequest, route.OnRequestTemplates)
 }
 
-// ProcessResponse applies all response operations to data
-func ProcessResponse(data map[string]any, headers map[string]string, rule *CompiledRule, ruleIndex int, method, path string) (bool, map[string]any) {
-	return processOperations("response", data, headers, ruleIndex, method, path, rule.OnResponse, rule.OnResponseTemplates)
+// ProcessResponse applies all response actions to data
+func ProcessResponse(data map[string]any, headers map[string]string, route *CompiledRoute, ruleIndex int, method, path string) (bool, map[string]any) {
+	return processActions("response", data, headers, ruleIndex, method, path, route.OnResponse, route.OnResponseTemplates)
 }
 
-// processOperations applies operations to data with their compiled templates
-func processOperations(phase string, data map[string]any, headers map[string]string, ruleIndex int, method, path string, operations []OperationExec, templates []*template.Template) (bool, map[string]any) {
+// processActions applies actions to data with their compiled templates
+func processActions(phase string, data map[string]any, headers map[string]string, ruleIndex int, method, path string, operations []ActionExec, templates []*template.Template) (bool, map[string]any) {
 	appliedValues := make(map[string]any)
 	anyApplied := false
 	addedKeys := make([]string, 0)
@@ -160,13 +160,13 @@ func processOperations(phase string, data map[string]any, headers map[string]str
 		}
 
 		if op.Stop {
-			logger.Debug("Operation stop flag set", "index", i)
+			logger.Debug("Action stop flag set", "index", i)
 			break
 		}
 	}
 
 	if anyApplied {
-		logger.Debug("Rule applied request changes", "index", ruleIndex, "ops_run", opExecuted, "added", addedKeys, "updated", updatedKeys, "deleted", deletedKeys)
+		logger.Debug("Route applied request changes", "index", ruleIndex, "ops_run", opExecuted, "added", addedKeys, "updated", updatedKeys, "deleted", deletedKeys)
 	}
 
 	return anyApplied, appliedValues

@@ -16,10 +16,10 @@ import (
 
 type contextKey string
 
-const ruleContextKey contextKey = "matched_rule"
+const routeContextKey contextKey = "matched_route"
 
-type responseRuleContext struct {
-	rules   []*config.Rule
+type responseRouteContext struct {
+	rules   []*config.Route
 	indices []int
 }
 
@@ -41,32 +41,32 @@ func headersJSON(headers map[string][]string) string {
 	return string(b)
 }
 
-// FindMatchingRules returns all rules that match the request sequentially
-func FindMatchingRules(req *http.Request, cfg *config.Config) []*config.Rule {
-	logger.Debug("Evaluating rules for request", "rule_count", len(cfg.Rules), "method", req.Method, "path", req.URL.Path)
+// FindMatchingRoutes returns all routes that match the request sequentially
+func FindMatchingRoutes(req *http.Request, cfg *config.Config) []*config.Route {
+	logger.Debug("Evaluating routes for request", "route_count", len(cfg.Routes), "method", req.Method, "path", req.URL.Path)
 
-	var matchedRules []*config.Rule
+	var matchedRoutes []*config.Route
 
-	for i := range cfg.Rules {
-		rule := &cfg.Rules[i]
-		methodMatch := rule.Methods.Matches(req.Method)
-		pathMatch := rule.Paths.Matches(req.URL.Path)
+	for i := range cfg.Routes {
+		route := &cfg.Routes[i]
+		methodMatch := route.Methods.Matches(req.Method)
+		pathMatch := route.Paths.Matches(req.URL.Path)
 
-		logger.Debug("Rule evaluation", "index", i, "methods", rule.Methods.Patterns, "paths", rule.Paths.Patterns, "method_match", methodMatch, "path_match", pathMatch)
+		logger.Debug("Route evaluation", "index", i, "methods", route.Methods.Patterns, "paths", route.Paths.Patterns, "method_match", methodMatch, "path_match", pathMatch)
 
 		if methodMatch && pathMatch {
-			logger.Debug("Rule matched", "index", i)
-			matchedRules = append(matchedRules, rule)
+			logger.Debug("Route matched", "index", i)
+			matchedRoutes = append(matchedRoutes, route)
 		}
 	}
 
-	if len(matchedRules) == 0 {
-		logger.Debug("No rules matched for request")
+	if len(matchedRoutes) == 0 {
+		logger.Debug("No routes matched for request")
 	} else {
-		logger.Debug("Matched rules for request", "count", len(matchedRules))
+		logger.Debug("Matched routes for request", "count", len(matchedRoutes))
 	}
 
-	return matchedRules
+	return matchedRoutes
 }
 
 // ModifyRequest processes the request through rules sequentially
@@ -123,47 +123,47 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 		}
 	}
 
-	// Track matched rules for response processing
-	var matchedResponseRules responseRuleContext
+	// Track matched routes for response processing
+	var matchedResponseRoutes responseRouteContext
 	anyModified := false
 	allAppliedValues := make(map[string]any)
 	matchedCount := 0
 
 	// Process rules sequentially: check and apply each rule before moving to next
-	for i := range cfg.Rules {
-		rule := &cfg.Rules[i]
+	for i := range cfg.Routes {
+		rule := &cfg.Routes[i]
 
 		// Check if this rule matches (method and path)
 		methodMatch := rule.Methods.Matches(req.Method)
 		pathMatch := rule.Paths.Matches(req.URL.Path)
 
 		if !methodMatch || !pathMatch {
-			logger.Debug("Rule skipped", "index", i, "methods", rule.Methods.Patterns, "paths", rule.Paths.Patterns)
+			logger.Debug("Route skipped", "index", i, "methods", rule.Methods.Patterns, "paths", rule.Paths.Patterns)
 			continue
 		}
 
-		logger.Debug("Rule matched", "index", i, "methods", rule.Methods.Patterns, "paths", rule.Paths.Patterns)
+		logger.Debug("Route matched", "index", i, "methods", rule.Methods.Patterns, "paths", rule.Paths.Patterns)
 
 		matchedCount++
-		matchedResponseRules.rules = append(matchedResponseRules.rules, rule)
-		matchedResponseRules.indices = append(matchedResponseRules.indices, i)
+		matchedResponseRoutes.rules = append(matchedResponseRoutes.rules, rule)
+		matchedResponseRoutes.indices = append(matchedResponseRoutes.indices, i)
 
 		// Handle target path rewriting
 		if rule.TargetPath != "" {
 			originalPath := req.URL.Path
 			if rule.TargetPath != originalPath {
 				req.URL.Path = rule.TargetPath
-				logger.Debug("Rule path rewrite applied", "index", i, "from", originalPath, "to", rule.TargetPath)
+				logger.Debug("Route path rewrite applied", "index", i, "from", originalPath, "to", rule.TargetPath)
 			}
 		}
 
-		// Skip body processing if no JSON body or no operations
+		// Skip body processing if no JSON body or no actions
 		if !hasJSONBody || len(rule.OnRequest) == 0 {
 			continue
 		}
 
-		// Apply operations to the current (possibly modified) data
-		modified, appliedValues := config.ProcessRequest(data, headers, rule.OpRule, i, method, path)
+		// Apply actions to the current (possibly modified) data
+		modified, appliedValues := config.ProcessRequest(data, headers, rule.Compiled, i, method, path)
 
 		if modified {
 			anyModified = true
@@ -175,9 +175,9 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 
 	}
 
-	// Store the last matching rule in context for response processing
-	if len(matchedResponseRules.rules) > 0 {
-		ctx := context.WithValue(req.Context(), ruleContextKey, &matchedResponseRules)
+	// Store the matching routes in context for response processing
+	if len(matchedResponseRoutes.rules) > 0 {
+		ctx := context.WithValue(req.Context(), routeContextKey, &matchedResponseRoutes)
 		*req = *req.WithContext(ctx)
 	}
 
@@ -199,7 +199,7 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 			"changes", len(allAppliedValues),
 		}
 		if matchedCount > 0 {
-			fields = append(fields, "matched_rules", matchedResponseRules.indices)
+			fields = append(fields, "matched_routes", matchedResponseRoutes.indices)
 		}
 		logger.Info("Outbound request", fields...)
 
@@ -213,44 +213,44 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 	}
 }
 
-// ModifyResponse processes the response through matching rules
+// ModifyResponse processes the response through matching routes
 func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 	method := resp.Request.Method
 	path := resp.Request.URL.Path
 	contentType := resp.Header.Get("Content-Type")
 
-	// Get the rule from context (may be nil)
-	var matchedRules []*config.Rule
-	var matchedRuleIndices []int
-	switch v := resp.Request.Context().Value(ruleContextKey).(type) {
-	case *responseRuleContext:
+	// Get the routes from context (may be nil)
+	var matchedRoutes []*config.Route
+	var matchedRouteIndices []int
+	switch v := resp.Request.Context().Value(routeContextKey).(type) {
+	case *responseRouteContext:
 		if v != nil {
-			matchedRules = v.rules
-			matchedRuleIndices = v.indices
+			matchedRoutes = v.rules
+			matchedRouteIndices = v.indices
 		}
-	case *config.Rule:
-		matchedRules = []*config.Rule{v}
+	case *config.Route:
+		matchedRoutes = []*config.Route{v}
 	}
 
-	if len(matchedRules) > 0 && len(matchedRuleIndices) != len(matchedRules) {
-		// Ensure indices slice aligns with rules length (backward compatibility for contexts without indices)
-		matchedRuleIndices = make([]int, len(matchedRules))
-		for i := range matchedRuleIndices {
-			matchedRuleIndices[i] = -1
+	if len(matchedRoutes) > 0 && len(matchedRouteIndices) != len(matchedRoutes) {
+		// Ensure indices slice aligns with routes length (backward compatibility for contexts without indices)
+		matchedRouteIndices = make([]int, len(matchedRoutes))
+		for i := range matchedRouteIndices {
+			matchedRouteIndices[i] = -1
 		}
 	}
 
 	// Route to streaming handler if SSE (log events even without on_response operations)
 	if strings.Contains(contentType, "text/event-stream") {
-		if len(matchedRules) == 0 {
+		if len(matchedRoutes) == 0 {
 			logger.Info("Streaming response", "method", method, "path", path, "status", resp.StatusCode, "content_type", contentType)
 		} else {
-			logger.Info("Streaming response", "method", method, "path", path, "status", resp.StatusCode, "content_type", contentType, "matched_rules", matchedRuleIndices)
+			logger.Info("Streaming response", "method", method, "path", path, "status", resp.StatusCode, "content_type", contentType, "matched_routes", matchedRouteIndices)
 		}
 		if logger.IsDebug() {
 			logger.Debug("Streaming response headers", "headers", headersJSON(resp.Header))
 		}
-		return ModifyStreamingResponse(resp, matchedRules, matchedRuleIndices)
+		return ModifyStreamingResponse(resp, matchedRoutes, matchedRouteIndices)
 	}
 
 	// Read response body (limit to 10MB)
@@ -278,27 +278,27 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 	resp.ContentLength = int64(len(body))
 
-	if len(matchedRules) == 0 {
+	if len(matchedRoutes) == 0 {
 		logger.Info("Outbound response", "method", method, "path", path, "status", resp.StatusCode, "changes", 0, "reason", "no_matching_rule", "content_type", contentType)
 		return nil
 	}
 
 	// Skip if no response operations in any matched rule
 	hasResponseOps := false
-	for _, r := range matchedRules {
+	for _, r := range matchedRoutes {
 		if len(r.OnResponse) > 0 {
 			hasResponseOps = true
 			break
 		}
 	}
 	if !hasResponseOps {
-		logger.Info("Outbound response", "method", method, "path", path, "status", resp.StatusCode, "changes", 0, "reason", "no_on_response_operations", "matched_rules", matchedRuleIndices, "content_type", contentType)
+		logger.Info("Outbound response", "method", method, "path", path, "status", resp.StatusCode, "changes", 0, "reason", "no_on_response_operations", "matched_routes", matchedRouteIndices, "content_type", contentType)
 		return nil
 	}
 
 	// Skip if not JSON
 	if !strings.Contains(contentType, "application/json") {
-		logger.Info("Outbound response", "method", method, "path", path, "status", resp.StatusCode, "changes", 0, "reason", "non_json", "matched_rules", matchedRuleIndices, "content_type", contentType)
+		logger.Info("Outbound response", "method", method, "path", path, "status", resp.StatusCode, "changes", 0, "reason", "non_json", "matched_routes", matchedRouteIndices, "content_type", contentType)
 		return nil
 	}
 
@@ -319,11 +319,11 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 
 	anyModified := false
 	appliedValues := make(map[string]any)
-	for i, rule := range matchedRules {
-		if len(rule.OnResponse) == 0 || rule.OpRule == nil {
+	for i, route := range matchedRoutes {
+		if len(route.OnResponse) == 0 || route.Compiled == nil {
 			continue
 		}
-		modified, vals := config.ProcessResponse(data, headers, rule.OpRule, matchedRuleIndices[i], method, path)
+		modified, vals := config.ProcessResponse(data, headers, route.Compiled, matchedRouteIndices[i], method, path)
 		if modified {
 			anyModified = true
 		}
@@ -347,8 +347,8 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 		"status", resp.StatusCode,
 		"changes", len(appliedValues),
 	}
-	if len(matchedRuleIndices) > 0 {
-		fields = append(fields, "matched_rules", matchedRuleIndices)
+	if len(matchedRouteIndices) > 0 {
+		fields = append(fields, "matched_routes", matchedRouteIndices)
 	}
 	logger.Info("Outbound response", fields...)
 
@@ -361,14 +361,14 @@ func ModifyResponse(resp *http.Response, cfg *config.Config) error {
 }
 
 // ModifyStreamingResponse processes Server-Sent Events (SSE) line-by-line
-func ModifyStreamingResponse(resp *http.Response, rules []*config.Rule, ruleIndices []int) error {
+func ModifyStreamingResponse(resp *http.Response, routes []*config.Route, routeIndices []int) error {
 	method := resp.Request.Method
 	path := resp.Request.URL.Path
 
-	if len(rules) > 0 && len(ruleIndices) != len(rules) {
-		ruleIndices = make([]int, len(rules))
-		for i := range ruleIndices {
-			ruleIndices[i] = -1
+	if len(routes) > 0 && len(routeIndices) != len(routes) {
+		routeIndices = make([]int, len(routes))
+		for i := range routeIndices {
+			routeIndices[i] = -1
 		}
 	}
 
@@ -458,11 +458,11 @@ func ModifyStreamingResponse(resp *http.Response, rules []*config.Rule, ruleIndi
 			// Apply response transformations
 			modified := false
 			appliedValues := make(map[string]any)
-			for i, rule := range rules {
-				if rule == nil || len(rule.OnResponse) == 0 || rule.OpRule == nil {
+			for i, rule := range routes {
+				if rule == nil || len(rule.OnResponse) == 0 || rule.Compiled == nil {
 					continue
 				}
-				changed, vals := config.ProcessResponse(data, headers, rule.OpRule, ruleIndices[i], method, path)
+				changed, vals := config.ProcessResponse(data, headers, rule.Compiled, routeIndices[i], method, path)
 				if changed {
 					modified = true
 					for k, v := range vals {

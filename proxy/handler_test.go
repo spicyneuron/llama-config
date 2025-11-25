@@ -14,20 +14,20 @@ import (
 
 // ensure we apply all matching on_response handlers, not just the last match
 func TestModifyResponseAppliesAllMatchedRules(t *testing.T) {
-	rules := []config.Rule{
+	rules := []config.Route{
 		{
 			Methods:    config.PatternField{Patterns: []string{"POST"}},
 			Paths:      config.PatternField{Patterns: []string{"^/v1/chat$"}},
-			OnResponse: []config.Operation{{Merge: map[string]any{"first": true}}},
+			OnResponse: []config.Action{{Merge: map[string]any{"first": true}}},
 		},
 		{
 			Methods:    config.PatternField{Patterns: []string{"POST"}},
 			Paths:      config.PatternField{Patterns: []string{"^/v1/chat$"}},
-			OnResponse: []config.Operation{{Merge: map[string]any{"second": "yes"}}},
+			OnResponse: []config.Action{{Merge: map[string]any{"second": "yes"}}},
 		},
 	}
 
-	// Compile patterns and operations
+	// Compile patterns and actions
 	for i := range rules {
 		if err := rules[i].Methods.Validate(); err != nil {
 			t.Fatalf("methods validate: %v", err)
@@ -35,13 +35,13 @@ func TestModifyResponseAppliesAllMatchedRules(t *testing.T) {
 		if err := rules[i].Paths.Validate(); err != nil {
 			t.Fatalf("paths validate: %v", err)
 		}
-		rules[i].OpRule = &config.CompiledRule{
-			OnResponse:          []config.OperationExec{config.OperationExec(rules[i].OnResponse[0])},
+		rules[i].Compiled = &config.CompiledRoute{
+			OnResponse:          []config.ActionExec{config.ActionExec(rules[i].OnResponse[0])},
 			OnResponseTemplates: []*template.Template{nil},
 		}
 	}
 
-	cfg := config.Config{Rules: rules}
+	cfg := config.Config{Routes: rules}
 
 	req := httptest.NewRequest("POST", "http://example.com/v1/chat", bytes.NewBufferString(`{"original":true}`))
 	req.Header.Set("Content-Type", "application/json")

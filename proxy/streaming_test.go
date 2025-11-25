@@ -27,12 +27,12 @@ func TestModifyStreamingResponse_OllamaFormat(t *testing.T) {
 			Listen: "localhost:8080",
 			Target: "http://localhost:9000",
 		}},
-		Rules: []config.Rule{
+		Routes: []config.Route{
 			{
 				Methods:    config.PatternField{Patterns: []string{"POST"}},
 				Paths:      config.PatternField{Patterns: []string{"^/test$"}},
 				TargetPath: "/v1/test",
-				OnResponse: []config.Operation{
+				OnResponse: []config.Action{
 					{
 						MatchBody: map[string]config.PatternField{
 							"role": {Patterns: []string{".*"}},
@@ -73,14 +73,14 @@ func TestModifyStreamingResponse_OllamaFormat(t *testing.T) {
 	}
 
 	// Find matching rules
-	rules := FindMatchingRules(resp.Request, cfg)
+	rules := FindMatchingRoutes(resp.Request, cfg)
 	if len(rules) == 0 {
 		t.Fatal("No matching rules found")
 	}
 	rule := rules[0]
 
 	// Apply streaming transformation
-	err := ModifyStreamingResponse(resp, []*config.Rule{rule}, []int{0})
+	err := ModifyStreamingResponse(resp, []*config.Route{rule}, []int{0})
 	if err != nil {
 		t.Fatalf("ModifyStreamingResponse failed: %v", err)
 	}
@@ -151,11 +151,11 @@ func TestModifyStreamingResponse_PassthroughNonJSON(t *testing.T) {
 			Listen: "localhost:8080",
 			Target: "http://localhost:9000",
 		}},
-		Rules: []config.Rule{
+		Routes: []config.Route{
 			{
 				Methods: config.PatternField{Patterns: []string{"GET"}},
 				Paths:   config.PatternField{Patterns: []string{"^/stream$"}},
-				OnResponse: []config.Operation{
+				OnResponse: []config.Action{
 					{
 						Merge: map[string]any{"test": "dummy"},
 					},
@@ -191,14 +191,14 @@ data: keep-alive
 		},
 	}
 
-	rules := FindMatchingRules(resp.Request, cfg)
+	rules := FindMatchingRoutes(resp.Request, cfg)
 	if len(rules) == 0 {
 		t.Fatal("No matching rules found")
 	}
 	rule := rules[0]
 
 	// Apply streaming transformation (should pass through)
-	err := ModifyStreamingResponse(resp, []*config.Rule{rule}, []int{0})
+	err := ModifyStreamingResponse(resp, []*config.Route{rule}, []int{0})
 	if err != nil {
 		t.Fatalf("ModifyStreamingResponse failed: %v", err)
 	}
@@ -222,11 +222,11 @@ func TestModifyResponse_RoutesToStreaming(t *testing.T) {
 			Listen: "localhost:8080",
 			Target: "http://localhost:9000",
 		}},
-		Rules: []config.Rule{
+		Routes: []config.Route{
 			{
 				Methods: config.PatternField{Patterns: []string{"POST"}},
 				Paths:   config.PatternField{Patterns: []string{"^/api/chat$"}},
-				OnResponse: []config.Operation{
+				OnResponse: []config.Action{
 					{
 						Merge: map[string]any{"test": "value"},
 					},
@@ -280,14 +280,14 @@ func TestModifyResponse_RoutesToStreaming(t *testing.T) {
 			}
 
 			// Find and store matching rules in context
-			rules := FindMatchingRules(req, cfg)
+			rules := FindMatchingRoutes(req, cfg)
 			if len(rules) == 0 {
 				t.Fatal("No matching rules")
 			}
 			rule := rules[0]
 
 			// Store rule in request context (mimicking what ModifyRequest does)
-			ctx := context.WithValue(req.Context(), ruleContextKey, rule)
+			ctx := context.WithValue(req.Context(), routeContextKey, rule)
 			*req = *req.WithContext(ctx)
 
 			// Call ModifyResponse which should route correctly

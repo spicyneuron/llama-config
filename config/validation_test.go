@@ -19,11 +19,11 @@ func TestValidateConfig(t *testing.T) {
 					Listen: "localhost:8081",
 					Target: "http://localhost:8080",
 				}},
-				Rules: []Rule{
+				Routes: []Route{
 					{
 						Methods: newPatternField("POST"),
 						Paths:   newPatternField("/v1/chat"),
-						OnRequest: []Operation{
+						OnRequest: []Action{
 							{Merge: map[string]any{"temperature": 0.7}},
 						},
 					},
@@ -37,11 +37,11 @@ func TestValidateConfig(t *testing.T) {
 				Proxies: ProxyEntries{{
 					Target: "http://localhost:8080",
 				}},
-				Rules: []Rule{
+				Routes: []Route{
 					{
 						Methods:   newPatternField("POST"),
 						Paths:     newPatternField("/v1/chat"),
-						OnRequest: []Operation{{Merge: map[string]any{"temp": 0.7}}},
+						OnRequest: []Action{{Merge: map[string]any{"temp": 0.7}}},
 					},
 				},
 			},
@@ -54,11 +54,11 @@ func TestValidateConfig(t *testing.T) {
 				Proxies: ProxyEntries{{
 					Listen: "localhost:8081",
 				}},
-				Rules: []Rule{
+				Routes: []Route{
 					{
 						Methods:   newPatternField("POST"),
 						Paths:     newPatternField("/v1/chat"),
-						OnRequest: []Operation{{Merge: map[string]any{"temp": 0.7}}},
+						OnRequest: []Action{{Merge: map[string]any{"temp": 0.7}}},
 					},
 				},
 			},
@@ -72,11 +72,11 @@ func TestValidateConfig(t *testing.T) {
 					Listen: "localhost:8081",
 					Target: "://invalid",
 				}},
-				Rules: []Rule{
+				Routes: []Route{
 					{
 						Methods:   newPatternField("POST"),
 						Paths:     newPatternField("/v1/chat"),
-						OnRequest: []Operation{{Merge: map[string]any{"temp": 0.7}}},
+						OnRequest: []Action{{Merge: map[string]any{"temp": 0.7}}},
 					},
 				},
 			},
@@ -91,11 +91,11 @@ func TestValidateConfig(t *testing.T) {
 					Target:  "http://localhost:8080",
 					SSLCert: "cert.pem",
 				}},
-				Rules: []Rule{
+				Routes: []Route{
 					{
 						Methods:   newPatternField("POST"),
 						Paths:     newPatternField("/v1/chat"),
-						OnRequest: []Operation{{Merge: map[string]any{"temp": 0.7}}},
+						OnRequest: []Action{{Merge: map[string]any{"temp": 0.7}}},
 					},
 				},
 			},
@@ -110,11 +110,11 @@ func TestValidateConfig(t *testing.T) {
 					Target: "http://localhost:8080",
 					SSLKey: "key.pem",
 				}},
-				Rules: []Rule{
+				Routes: []Route{
 					{
 						Methods:   newPatternField("POST"),
 						Paths:     newPatternField("/v1/chat"),
-						OnRequest: []Operation{{Merge: map[string]any{"temp": 0.7}}},
+						OnRequest: []Action{{Merge: map[string]any{"temp": 0.7}}},
 					},
 				},
 			},
@@ -143,11 +143,11 @@ func TestValidateDuplicateListeners(t *testing.T) {
 			{Listen: "localhost:8081", Target: "http://t1"},
 			{Listen: "localhost:8081", Target: "http://t2"},
 		},
-		Rules: []Rule{
+		Routes: []Route{
 			{
 				Methods:   newPatternField("GET"),
 				Paths:     newPatternField("/"),
-				OnRequest: []Operation{{Merge: map[string]any{"x": 1}}},
+				OnRequest: []Action{{Merge: map[string]any{"x": 1}}},
 			},
 		},
 	}
@@ -158,16 +158,16 @@ func TestValidateDuplicateListeners(t *testing.T) {
 	}
 }
 
-func TestValidateOnResponseOnlyRules(t *testing.T) {
+func TestValidateOnResponseOnlyRoutes(t *testing.T) {
 	cfg := &Config{
 		Proxies: ProxyEntries{
 			{Listen: "localhost:8081", Target: "http://t1"},
 		},
-		Rules: []Rule{
+		Routes: []Route{
 			{
 				Methods:    newPatternField("GET"),
 				Paths:      newPatternField("/ok"),
-				OnResponse: []Operation{{Merge: map[string]any{"processed": true}}},
+				OnResponse: []Action{{Merge: map[string]any{"processed": true}}},
 			},
 		},
 	}
@@ -177,76 +177,76 @@ func TestValidateOnResponseOnlyRules(t *testing.T) {
 	}
 }
 
-func TestValidateRule(t *testing.T) {
+func TestValidateRoute(t *testing.T) {
 	tests := []struct {
 		name    string
-		rule    Rule
+		rule    Route
 		wantErr bool
 		errMsg  string
 	}{
 		{
 			name: "valid rule",
-			rule: Rule{
+			rule: Route{
 				Methods:   newPatternField("POST"),
 				Paths:     newPatternField("/v1/chat"),
-				OnRequest: []Operation{{Merge: map[string]any{"temp": 0.7}}},
+				OnRequest: []Action{{Merge: map[string]any{"temp": 0.7}}},
 			},
 			wantErr: false,
 		},
 		{
 			name: "missing methods",
-			rule: Rule{
+			rule: Route{
 				Paths:     newPatternField("/v1/chat"),
-				OnRequest: []Operation{{Merge: map[string]any{"temp": 0.7}}},
+				OnRequest: []Action{{Merge: map[string]any{"temp": 0.7}}},
 			},
 			wantErr: true,
 			errMsg:  "methods required",
 		},
 		{
 			name: "missing paths",
-			rule: Rule{
+			rule: Route{
 				Methods:   newPatternField("POST"),
-				OnRequest: []Operation{{Merge: map[string]any{"temp": 0.7}}},
+				OnRequest: []Action{{Merge: map[string]any{"temp": 0.7}}},
 			},
 			wantErr: true,
 			errMsg:  "paths required",
 		},
 		{
 			name: "no operations",
-			rule: Rule{
+			rule: Route{
 				Methods: newPatternField("POST"),
 				Paths:   newPatternField("/v1/chat"),
 			},
 			wantErr: true,
-			errMsg:  "at least one operation required",
+			errMsg:  "at least one action required",
 		},
 		{
 			name: "invalid target path (not absolute)",
-			rule: Rule{
+			rule: Route{
 				Methods:    newPatternField("POST"),
 				Paths:      newPatternField("/v1/chat"),
 				TargetPath: "relative/path",
-				OnRequest:  []Operation{{Merge: map[string]any{"temp": 0.7}}},
+				OnRequest:  []Action{{Merge: map[string]any{"temp": 0.7}}},
 			},
 			wantErr: true,
 			errMsg:  "target_path must be absolute",
 		},
 		{
 			name: "invalid regex in methods",
-			rule: Rule{
+			rule: Route{
 				Methods:   newPatternField("[invalid"),
 				Paths:     newPatternField("/v1/chat"),
-				OnRequest: []Operation{{Merge: map[string]any{"temp": 0.7}}},
+				OnRequest: []Action{{Merge: map[string]any{"temp": 0.7}}},
 			},
 			wantErr: true,
 			errMsg:  "invalid regex pattern",
 		},
 		{
 			name: "invalid regex in paths",
-			rule: Rule{
+			rule: Route{
 				Methods:   newPatternField("POST"),
 				Paths:     newPatternField("[invalid"),
-				OnRequest: []Operation{{Merge: map[string]any{"temp": 0.7}}},
+				OnRequest: []Action{{Merge: map[string]any{"temp": 0.7}}},
 			},
 			wantErr: true,
 			errMsg:  "invalid regex pattern",
@@ -255,56 +255,56 @@ func TestValidateRule(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateRule(&tt.rule, 0)
+			err := validateRoute(&tt.rule, 0)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("validateRule() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("validateRoute() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if tt.wantErr && !strings.Contains(err.Error(), tt.errMsg) {
-				t.Errorf("validateRule() error = %v, want error containing %q", err, tt.errMsg)
+				t.Errorf("validateRoute() error = %v, want error containing %q", err, tt.errMsg)
 			}
 		})
 	}
 }
 
-func TestValidateOperation(t *testing.T) {
+func TestValidateAction(t *testing.T) {
 	tests := []struct {
 		name    string
-		op      Operation
+		op      Action
 		wantErr bool
 		errMsg  string
 	}{
 		{
 			name: "valid merge operation",
-			op: Operation{
+			op: Action{
 				Merge: map[string]any{"temperature": 0.7},
 			},
 			wantErr: false,
 		},
 		{
 			name: "valid default operation",
-			op: Operation{
+			op: Action{
 				Default: map[string]any{"max_tokens": 1000},
 			},
 			wantErr: false,
 		},
 		{
 			name: "valid delete operation",
-			op: Operation{
+			op: Action{
 				Delete: []string{"field1", "field2"},
 			},
 			wantErr: false,
 		},
 		{
 			name: "valid template operation",
-			op: Operation{
+			op: Action{
 				Template: `{"model": "{{ .model }}"}`,
 			},
 			wantErr: false,
 		},
 		{
 			name: "valid match_body filter",
-			op: Operation{
+			op: Action{
 				MatchBody: map[string]PatternField{
 					"model": newPatternField("llama.*"),
 				},
@@ -314,7 +314,7 @@ func TestValidateOperation(t *testing.T) {
 		},
 		{
 			name: "valid match_headers filter",
-			op: Operation{
+			op: Action{
 				MatchHeaders: map[string]PatternField{
 					"Content-Type": newPatternField("application/json"),
 				},
@@ -324,7 +324,7 @@ func TestValidateOperation(t *testing.T) {
 		},
 		{
 			name: "valid match_body and match_headers",
-			op: Operation{
+			op: Action{
 				MatchBody: map[string]PatternField{
 					"model": newPatternField("gpt.*"),
 				},
@@ -337,13 +337,13 @@ func TestValidateOperation(t *testing.T) {
 		},
 		{
 			name:    "no actions",
-			op:      Operation{},
+			op:      Action{},
 			wantErr: true,
 			errMsg:  "must have at least one action",
 		},
 		{
 			name: "invalid regex in match_body",
-			op: Operation{
+			op: Action{
 				MatchBody: map[string]PatternField{
 					"model": newPatternField("[invalid"),
 				},
@@ -354,7 +354,7 @@ func TestValidateOperation(t *testing.T) {
 		},
 		{
 			name: "invalid regex in match_headers",
-			op: Operation{
+			op: Action{
 				MatchHeaders: map[string]PatternField{
 					"Content-Type": newPatternField("[invalid"),
 				},
@@ -367,13 +367,13 @@ func TestValidateOperation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateOperation(&tt.op, 0, 0, "on_request")
+			err := validateAction(&tt.op, 0, 0, "on_request")
 			if (err != nil) != tt.wantErr {
-				t.Errorf("validateOperation() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("validateAction() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if tt.wantErr && !strings.Contains(err.Error(), tt.errMsg) {
-				t.Errorf("validateOperation() error = %v, want error containing %q", err, tt.errMsg)
+				t.Errorf("validateAction() error = %v, want error containing %q", err, tt.errMsg)
 			}
 		})
 	}

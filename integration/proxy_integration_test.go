@@ -27,11 +27,11 @@ func TestEndToEndRequestModification(t *testing.T) {
 	defer closeBackend()
 
 	// Create config with a simple rule
-	cfg := newTestConfig(backend.URL, []config.Rule{
+	cfg := newTestConfig(backend.URL, []config.Route{
 		{
 			Methods: newPatternField("POST"),
 			Paths:   newPatternField("/v1/chat/completions"),
-			OnRequest: []config.Operation{
+			OnRequest: []config.Action{
 				{
 					// Add default max_tokens
 					Default: map[string]any{
@@ -147,14 +147,14 @@ func TestEndToEndResponseModification(t *testing.T) {
 			Listen: "localhost:8081",
 			Target: backend.URL,
 		}},
-		Rules: []config.Rule{
+		Routes: []config.Route{
 			{
 				Methods: newPatternField("POST"),
 				Paths:   newPatternField("/v1/chat/completions"),
-				OnRequest: []config.Operation{
+				OnRequest: []config.Action{
 					{Default: map[string]any{"temperature": 0.5}},
 				},
-				OnResponse: []config.Operation{
+				OnResponse: []config.Action{
 					{
 						Merge: map[string]any{
 							"processed_by": "llama-matchmaker",
@@ -244,11 +244,11 @@ func TestBodySizeLimit(t *testing.T) {
 	}
 	defer closeBackend()
 
-	cfg := newTestConfig(backend.URL, []config.Rule{
+	cfg := newTestConfig(backend.URL, []config.Route{
 		{
 			Methods:   newPatternField("POST"),
 			Paths:     newPatternField("/test"),
-			OnRequest: []config.Operation{{Merge: map[string]any{"field": "value"}}},
+			OnRequest: []config.Action{{Merge: map[string]any{"field": "value"}}},
 		},
 	})
 

@@ -29,9 +29,9 @@ func parseConfig(t *testing.T, yamlContent string) (*Config, error) {
 		if cfg.Proxies[i].Timeout == 0 {
 			cfg.Proxies[i].Timeout = 60 * time.Second
 		}
-		// Inherit shared rules if none set on the proxy
-		if len(cfg.Proxies[i].Rules) == 0 && len(cfg.Rules) > 0 {
-			cfg.Proxies[i].Rules = append([]Rule(nil), cfg.Rules...)
+		// Inherit shared routes if none set on the proxy
+		if len(cfg.Proxies[i].Routes) == 0 && len(cfg.Routes) > 0 {
+			cfg.Proxies[i].Routes = append([]Route(nil), cfg.Routes...)
 		}
 	}
 

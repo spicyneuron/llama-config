@@ -22,7 +22,7 @@ proxy:
   target: "http://localhost:8080"
   timeout: 30s
 
-rules:
+routes:
   - methods: POST
     paths: /v1/chat
     on_request:
@@ -49,12 +49,12 @@ rules:
 		t.Errorf("Timeout = %v, want 30s", cfg.Proxies[0].Timeout)
 	}
 
-	// Verify rules loaded and compiled
-	if len(cfg.Rules) != 1 {
-		t.Errorf("len(Rules) = %d, want 1", len(cfg.Rules))
+	// Verify routes loaded and compiled
+	if len(cfg.Routes) != 1 {
+		t.Errorf("len(Routes) = %d, want 1", len(cfg.Routes))
 	}
-	if cfg.Rules[0].OpRule == nil {
-		t.Error("Rule templates not compiled")
+	if cfg.Routes[0].Compiled == nil {
+		t.Error("Route templates not compiled")
 	}
 }
 
@@ -67,7 +67,7 @@ proxy:
   listen: "localhost:8081"
   target: "http://localhost:8080"
 
-rules:
+routes:
   - methods: POST
     paths: /v1/chat
     on_request:
@@ -111,7 +111,7 @@ proxy:
   listen: "localhost:8081"
   target: "http://localhost:8080"
 
-rules:
+routes:
   - methods: POST
     paths: /v1/chat
     on_request:
@@ -134,7 +134,7 @@ proxy:
   - listen: "localhost:8082"
     target: "http://localhost:8083"
 
-rules:
+routes:
   - methods: POST
     paths: /v1/chat
     on_request:
@@ -196,7 +196,7 @@ func TestLoadValidationFailure(t *testing.T) {
 proxy:
   target: "http://localhost:8080"
 
-rules:
+routes:
   - methods: POST
     paths: /v1/chat
     on_request:
@@ -218,7 +218,7 @@ proxy:
   listen: "localhost:8081"
   target: "http://localhost:8080"
 
-rules:
+routes:
   - methods: POST
     paths: /api/chat
     on_request:
@@ -231,20 +231,20 @@ rules:
 	cfg := mustParseConfig(t, configContent)
 
 	// Verify template was compiled
-	if len(cfg.Rules) != 1 {
-		t.Fatalf("len(Rules) = %d, want 1", len(cfg.Rules))
+	if len(cfg.Routes) != 1 {
+		t.Fatalf("len(Routes) = %d, want 1", len(cfg.Routes))
 	}
 
-	rule := cfg.Rules[0]
-	if rule.OpRule == nil {
-		t.Fatal("OpRule should not be nil")
+	rule := cfg.Routes[0]
+	if rule.Compiled == nil {
+		t.Fatal("Compiled should not be nil")
 	}
 
-	if len(rule.OpRule.OnRequestTemplates) != 1 {
-		t.Errorf("len(OnRequestTemplates) = %d, want 1", len(rule.OpRule.OnRequestTemplates))
+	if len(rule.Compiled.OnRequestTemplates) != 1 {
+		t.Errorf("len(OnRequestTemplates) = %d, want 1", len(rule.Compiled.OnRequestTemplates))
 	}
 
-	if rule.OpRule.OnRequestTemplates[0] == nil {
+	if rule.Compiled.OnRequestTemplates[0] == nil {
 		t.Error("Compiled template should not be nil")
 	}
 }
@@ -256,7 +256,7 @@ proxy:
   listen: "localhost:8081"
   target: "http://localhost:8080"
 
-rules:
+routes:
   - methods: POST
     paths: /api/chat
     on_request:
@@ -276,7 +276,7 @@ rules:
 	}
 	headers := make(map[string]string)
 
-	modified, appliedValues := ProcessRequest(data, headers, cfg.Rules[0].OpRule, 0, "", "")
+	modified, appliedValues := ProcessRequest(data, headers, cfg.Routes[0].Compiled, 0, "", "")
 
 	if !modified {
 		t.Error("Expected template to be applied")
@@ -327,7 +327,7 @@ proxy:
   - listen: "localhost:8081"
     target: "http://localhost:8080"
 
-rules:
+routes:
   - methods: POST
     paths: /api/chat
     on_request:
@@ -397,7 +397,7 @@ proxy:
   listen: "localhost:8080"
   target: "http://localhost:3000"
 
-rules:
+routes:
   - methods: GET
     paths: /health
     on_request:
@@ -410,7 +410,7 @@ rules:
 	}
 
 	rulesConfig := `
-rules:
+routes:
   - methods: POST
     paths: /api/.*
     on_request:
@@ -431,16 +431,16 @@ rules:
 		t.Errorf("Listen = %v, want localhost:8080", cfg.Proxies[0].Listen)
 	}
 
-	if len(cfg.Rules) != 2 {
-		t.Fatalf("len(Rules) = %d, want 2", len(cfg.Rules))
+	if len(cfg.Routes) != 2 {
+		t.Fatalf("len(Routes) = %d, want 2", len(cfg.Routes))
 	}
 
-	if cfg.Rules[0].Methods.Patterns[0] != "GET" {
-		t.Errorf("Rules[0].Methods = %v, want GET", cfg.Rules[0].Methods.Patterns[0])
+	if cfg.Routes[0].Methods.Patterns[0] != "GET" {
+		t.Errorf("Rules[0].Methods = %v, want GET", cfg.Routes[0].Methods.Patterns[0])
 	}
 
-	if cfg.Rules[1].Methods.Patterns[0] != "POST" {
-		t.Errorf("Rules[1].Methods = %v, want POST", cfg.Rules[1].Methods.Patterns[0])
+	if cfg.Routes[1].Methods.Patterns[0] != "POST" {
+		t.Errorf("Rules[1].Methods = %v, want POST", cfg.Routes[1].Methods.Patterns[0])
 	}
 }
 
@@ -452,7 +452,7 @@ proxy:
   listen: "localhost:8080"
   target: "http://localhost:3000"
 
-rules:
+routes:
   - methods: GET
     paths: /health
     on_request:
@@ -470,7 +470,7 @@ proxy:
   target: "http://localhost:3001"
   debug: true
 
-rules:
+routes:
   - methods: POST
     paths: /data
     on_request:
@@ -509,7 +509,7 @@ proxy:
   target: "http://localhost:3000"
   timeout: 30s
 
-rules:
+routes:
   - methods: GET
     paths: /health
     on_request:
@@ -556,7 +556,7 @@ proxy:
   - listen: "localhost:8081"
     target: "http://localhost:3001"
 
-rules:
+routes:
   - methods: GET
     paths: /health
     on_request:
@@ -587,7 +587,7 @@ func TestLoadThreeConfigs(t *testing.T) {
 		method  string
 	}{
 		{"config1.yml", `
-rules:
+routes:
   - methods: GET
     paths: /health
     on_request:
@@ -595,7 +595,7 @@ rules:
           from: "config1"
 `, "GET"},
 		{"config2.yml", `
-rules:
+routes:
   - methods: POST
     paths: /data
     on_request:
@@ -607,7 +607,7 @@ proxy:
   listen: "localhost:9000"
   target: "http://localhost:3000"
 
-rules:
+routes:
   - methods: DELETE
     paths: /remove
     on_request:
@@ -630,14 +630,14 @@ rules:
 		t.Fatalf("Load() failed: %v", err)
 	}
 
-	if len(mergedCfg.Rules) != 3 {
-		t.Fatalf("len(Rules) = %d, want 3", len(mergedCfg.Rules))
+	if len(mergedCfg.Routes) != 3 {
+		t.Fatalf("len(Routes) = %d, want 3", len(mergedCfg.Routes))
 	}
 
 	expectedMethods := []string{"GET", "POST", "DELETE"}
 	for i, expected := range expectedMethods {
-		if mergedCfg.Rules[i].Methods.Patterns[0] != expected {
-			t.Errorf("Rules[%d].Methods = %v, want %v", i, mergedCfg.Rules[i].Methods.Patterns[0], expected)
+		if mergedCfg.Routes[i].Methods.Patterns[0] != expected {
+			t.Errorf("Rules[%d].Methods = %v, want %v", i, mergedCfg.Routes[i].Methods.Patterns[0], expected)
 		}
 	}
 }
@@ -652,14 +652,14 @@ proxy:
     target: "http://localhost:8080"
   - listen: "localhost:8082"
     target: "http://localhost:8080"
-    rules:
+    routes:
       - methods: POST
         paths: ^/special$
         on_request:
           - merge:
               from: "proxy-override"
 
-rules:
+routes:
   - methods: POST
     paths: ^/special$
     on_request:
@@ -680,12 +680,12 @@ rules:
 	}
 
 	// First proxy should inherit shared rules
-	if got := cfg.Proxies[0].Rules; len(got) != 1 || got[0].OnRequest[0].Merge["from"] != "shared-rule" {
+	if got := cfg.Proxies[0].Routes; len(got) != 1 || got[0].OnRequest[0].Merge["from"] != "shared-rule" {
 		t.Fatalf("proxy[0] rules not inherited correctly: %+v", got)
 	}
 
 	// Second proxy should keep its own
-	if got := cfg.Proxies[1].Rules; len(got) != 1 || got[0].OnRequest[0].Merge["from"] != "proxy-override" {
+	if got := cfg.Proxies[1].Routes; len(got) != 1 || got[0].OnRequest[0].Merge["from"] != "proxy-override" {
 		t.Fatalf("proxy[1] rules not preserved: %+v", got)
 	}
 }
@@ -693,7 +693,7 @@ rules:
 func TestLoadIncludesAreExpanded(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	sharedRules := `
+	sharedRoutes := `
 - methods: POST
   paths: ^/included$
   on_request:
@@ -701,18 +701,18 @@ func TestLoadIncludesAreExpanded(t *testing.T) {
         marker: "included"
 `
 	sharedPath := filepath.Join(tmpDir, "shared_rules.yml")
-	if err := os.WriteFile(sharedPath, []byte(sharedRules), 0644); err != nil {
-		t.Fatalf("Failed to write shared rules: %v", err)
+	if err := os.WriteFile(sharedPath, []byte(sharedRoutes), 0644); err != nil {
+		t.Fatalf("Failed to write shared routes: %v", err)
 	}
 
 	configContent := fmt.Sprintf(`
 proxy:
   - listen: "localhost:8081"
     target: "http://localhost:8080"
-    rules:
+    routes:
       - include: %s
 
-rules:
+routes:
   - include: %s
 `, sharedPath, sharedPath)
 
@@ -730,25 +730,25 @@ rules:
 		t.Fatalf("expected 1 proxy, got %d", len(cfg.Proxies))
 	}
 
-	if len(cfg.Proxies[0].Rules) != 1 {
-		t.Fatalf("proxy rules include not expanded, got %d", len(cfg.Proxies[0].Rules))
+	if len(cfg.Proxies[0].Routes) != 1 {
+		t.Fatalf("proxy rules include not expanded, got %d", len(cfg.Proxies[0].Routes))
 	}
-	if cfg.Proxies[0].Rules[0].OnRequest[0].Merge["marker"] != "included" {
-		t.Errorf("expected proxy rule from include, got %+v", cfg.Proxies[0].Rules[0].OnRequest[0].Merge)
+	if cfg.Proxies[0].Routes[0].OnRequest[0].Merge["marker"] != "included" {
+		t.Errorf("expected proxy rule from include, got %+v", cfg.Proxies[0].Routes[0].OnRequest[0].Merge)
 	}
 
-	if len(cfg.Rules) != 1 {
-		t.Fatalf("shared rules include not expanded, got %d", len(cfg.Rules))
+	if len(cfg.Routes) != 1 {
+		t.Fatalf("shared rules include not expanded, got %d", len(cfg.Routes))
 	}
-	if cfg.Rules[0].OnRequest[0].Merge["marker"] != "included" {
-		t.Errorf("expected shared rule from include, got %+v", cfg.Rules[0].OnRequest[0].Merge)
+	if cfg.Routes[0].OnRequest[0].Merge["marker"] != "included" {
+		t.Errorf("expected shared rule from include, got %+v", cfg.Routes[0].OnRequest[0].Merge)
 	}
 }
 
 func TestLoadMultiProxyRulesFromIncludesOnly(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	sharedRules := `
+	sharedRoutes := `
 - methods: POST
   paths: ^/included$
   on_request:
@@ -756,20 +756,20 @@ func TestLoadMultiProxyRulesFromIncludesOnly(t *testing.T) {
         marker: "included"
 `
 	sharedPath := filepath.Join(tmpDir, "shared_rules.yml")
-	if err := os.WriteFile(sharedPath, []byte(sharedRules), 0644); err != nil {
-		t.Fatalf("Failed to write shared rules: %v", err)
+	if err := os.WriteFile(sharedPath, []byte(sharedRoutes), 0644); err != nil {
+		t.Fatalf("Failed to write shared routes: %v", err)
 	}
 
 	configContent := fmt.Sprintf(`
 proxy:
   - listen: "localhost:8081"
     target: "http://localhost:8080"
-    rules:
+    routes:
       - include: %s
 
   - listen: "localhost:8082"
     target: "http://localhost:8080"
-    rules:
+    routes:
       - include: %s
 `, sharedPath, sharedPath)
 
@@ -786,16 +786,16 @@ proxy:
 	if len(cfg.Proxies) != 2 {
 		t.Fatalf("expected 2 proxies, got %d", len(cfg.Proxies))
 	}
-	if len(cfg.Rules) != 0 {
-		t.Fatalf("expected 0 shared rules, got %d", len(cfg.Rules))
+	if len(cfg.Routes) != 0 {
+		t.Fatalf("expected 0 shared rules, got %d", len(cfg.Routes))
 	}
 
 	for i := range cfg.Proxies {
-		if len(cfg.Proxies[i].Rules) != 1 {
-			t.Fatalf("proxy %d rules include not expanded, got %d", i, len(cfg.Proxies[i].Rules))
+		if len(cfg.Proxies[i].Routes) != 1 {
+			t.Fatalf("proxy %d rules include not expanded, got %d", i, len(cfg.Proxies[i].Routes))
 		}
-		if cfg.Proxies[i].Rules[0].OnRequest[0].Merge["marker"] != "included" {
-			t.Errorf("expected proxy %d rule from include, got %+v", i, cfg.Proxies[i].Rules[0].OnRequest[0].Merge)
+		if cfg.Proxies[i].Routes[0].OnRequest[0].Merge["marker"] != "included" {
+			t.Errorf("expected proxy %d rule from include, got %+v", i, cfg.Proxies[i].Routes[0].OnRequest[0].Merge)
 		}
 	}
 }
@@ -803,7 +803,7 @@ proxy:
 func TestLoadDeduplicatesWatchedFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	sharedRules := `
+	sharedRoutes := `
 - methods: GET
   paths: /.*
   on_request:
@@ -811,8 +811,8 @@ func TestLoadDeduplicatesWatchedFiles(t *testing.T) {
         marker: "shared"
 `
 	sharedPath := filepath.Join(tmpDir, "shared_rules.yml")
-	if err := os.WriteFile(sharedPath, []byte(sharedRules), 0644); err != nil {
-		t.Fatalf("Failed to write shared rules: %v", err)
+	if err := os.WriteFile(sharedPath, []byte(sharedRoutes), 0644); err != nil {
+		t.Fatalf("Failed to write shared routes: %v", err)
 	}
 
 	configContent := fmt.Sprintf(`
@@ -820,7 +820,7 @@ proxy:
   listen: "localhost:8081"
   target: "http://localhost:8080"
 
-rules:
+routes:
   - include: %s
   - include: %s
 `, sharedPath, sharedPath)
@@ -852,7 +852,7 @@ rules:
 	}
 }
 
-func TestLoadOperationIncludesAreExpanded(t *testing.T) {
+func TestLoadActionIncludesAreExpanded(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	requestOps := filepath.Join(tmpDir, "request_ops.yml")
@@ -879,7 +879,7 @@ proxy:
   listen: "localhost:8081"
   target: "http://localhost:8080"
 
-rules:
+routes:
   - methods: POST
     paths: ^/chat$
     on_request:
@@ -897,7 +897,7 @@ rules:
 		t.Fatalf("Failed to load config: %v", err)
 	}
 
-	if got := cfg.Rules[0].OnRequest; len(got) != 2 {
+	if got := cfg.Routes[0].OnRequest; len(got) != 2 {
 		t.Fatalf("expected two request operations from include, got %d", len(got))
 	} else {
 		if got[0].Merge["marker"] != "request-include" {
@@ -908,7 +908,7 @@ rules:
 		}
 	}
 
-	if got := cfg.Rules[0].OnResponse; len(got) != 1 {
+	if got := cfg.Routes[0].OnResponse; len(got) != 1 {
 		t.Fatalf("expected one response operation from include, got %d", len(got))
 	} else if got[0].Default["marker"] != "response-include" {
 		t.Fatalf("expected default marker from include, got %+v", got[0].Default)
@@ -929,7 +929,7 @@ rules:
 	}
 }
 
-func TestLoadOperationIncludesFromMappingStyle(t *testing.T) {
+func TestLoadActionIncludesFromMappingStyle(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	requestOps := filepath.Join(tmpDir, "request_ops.yml")
@@ -955,7 +955,7 @@ proxy:
   listen: "localhost:8081"
   target: "http://localhost:8080"
 
-rules:
+routes:
   - methods: POST
     paths: ^/chat$
     on_request:
@@ -973,11 +973,11 @@ rules:
 		t.Fatalf("Failed to load config: %v", err)
 	}
 
-	if got := cfg.Rules[0].OnRequest; len(got) != 1 || !got[0].Stop || got[0].Merge["marker"] != "from-request-mapping" {
+	if got := cfg.Routes[0].OnRequest; len(got) != 1 || !got[0].Stop || got[0].Merge["marker"] != "from-request-mapping" {
 		t.Fatalf("expected stop operation from mapping-style include, got %+v", got)
 	}
 
-	if got := cfg.Rules[0].OnResponse; len(got) != 1 || got[0].Merge["marker"] != "from-response-mapping" {
+	if got := cfg.Routes[0].OnResponse; len(got) != 1 || got[0].Merge["marker"] != "from-response-mapping" {
 		t.Fatalf("expected merge from response mapping include, got %+v", got)
 	}
 }
@@ -989,7 +989,7 @@ proxy:
   listen: "localhost:8081"
   target: "http://localhost:8080"
 
-rules:
+routes:
   - include: does_not_exist.yml
 `
 	configPath := filepath.Join(tmpDir, "main.yml")
@@ -1011,7 +1011,7 @@ proxy:
   listen: "localhost:9000"
   target: "http://localhost:3000"
 
-rules:
+routes:
   - methods: GET
     paths: /test
     on_request:
@@ -1050,7 +1050,7 @@ proxy:
   - listen: "localhost:8081"
     target: "http://localhost:9000"
   - include: "include.yml"
-rules:
+routes:
   - methods: GET
     paths: /.*
     on_request:
@@ -1087,7 +1087,7 @@ func TestLoadResolvesSSLCliOverridesRelativeToCwd(t *testing.T) {
 proxy:
   listen: "localhost:9000"
   target: "http://localhost:3000"
-rules:
+routes:
   - methods: GET
     paths: /test
     on_request:

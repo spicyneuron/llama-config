@@ -3,7 +3,7 @@ proxy:
   target: "http://localhost:8080"
   timeout: 30s
 
-rules:
+routes:
   - methods: POST
     paths: /v1/chat/completions
     on_request:

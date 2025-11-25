@@ -2,7 +2,7 @@ package config
 
 import "testing"
 
-func TestProcessOperationsMatchHeadersDeleteAndStop(t *testing.T) {
+func TestProcessActionsMatchHeadersDeleteAndStop(t *testing.T) {
 	envPattern := PatternField{Patterns: []string{"prod"}}
 	if err := envPattern.Validate(); err != nil {
 		t.Fatalf("failed to compile env pattern: %v", err)
@@ -13,7 +13,7 @@ func TestProcessOperationsMatchHeadersDeleteAndStop(t *testing.T) {
 	}
 
 	// Build execution operations directly to avoid template compilation noise
-	ops := []OperationExec{
+	ops := []ActionExec{
 		{
 			MatchHeaders: map[string]PatternField{
 				"X-Env": envPattern,
@@ -39,7 +39,7 @@ func TestProcessOperationsMatchHeadersDeleteAndStop(t *testing.T) {
 		"remove_me": "y",
 	}
 
-	modified, applied := processOperations("test", body, headers, 0, "", "", ops, nil)
+	modified, applied := processActions("test", body, headers, 0, "", "", ops, nil)
 	if !modified {
 		t.Fatal("expected modifications to be applied")
 	}
@@ -71,8 +71,8 @@ func TestProcessResponseHeaderFilter(t *testing.T) {
 		t.Fatalf("failed to compile content-type pattern: %v", err)
 	}
 
-	compiled := &CompiledRule{
-		OnResponse: []OperationExec{
+	compiled := &CompiledRoute{
+		OnResponse: []ActionExec{
 			{
 				MatchHeaders: map[string]PatternField{
 					"Content-Type": ctPattern,

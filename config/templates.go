@@ -7,18 +7,18 @@ import (
 	"github.com/spicyneuron/llama-matchmaker/logger"
 )
 
-// CompileTemplates compiles all template strings in rules
+// CompileTemplates compiles all template strings in routes
 func CompileTemplates(cfg *Config) error {
-	// Compile shared rules first
-	if err := compileRuleTemplates(cfg.Rules, "global"); err != nil {
+	// Compile shared routes first
+	if err := compileRouteTemplates(cfg.Routes, "global"); err != nil {
 		return err
 	}
 
 	for i := range cfg.Proxies {
-		if len(cfg.Proxies[i].Rules) == 0 {
+		if len(cfg.Proxies[i].Routes) == 0 {
 			continue
 		}
-		if err := compileRuleTemplates(cfg.Proxies[i].Rules, fmt.Sprintf("proxy_%d", i)); err != nil {
+		if err := compileRouteTemplates(cfg.Proxies[i].Routes, fmt.Sprintf("proxy_%d", i)); err != nil {
 			return err
 		}
 	}
@@ -26,19 +26,19 @@ func CompileTemplates(cfg *Config) error {
 	return nil
 }
 
-func compileRuleTemplates(rules []Rule, prefix string) error {
-	for i := range rules {
-		rule := &rules[i]
+func compileRouteTemplates(routes []Route, prefix string) error {
+	for i := range routes {
+		route := &routes[i]
 
 		// Convert config operations to execution types
-		opRule := &CompiledRule{
-			OnRequest:  make([]OperationExec, len(rule.OnRequest)),
-			OnResponse: make([]OperationExec, len(rule.OnResponse)),
+		compiled := &CompiledRoute{
+			OnRequest:  make([]ActionExec, len(route.OnRequest)),
+			OnResponse: make([]ActionExec, len(route.OnResponse)),
 		}
 
 		// Convert OnRequest operations
-		for j, op := range rule.OnRequest {
-			opRule.OnRequest[j] = convertOperation(op)
+		for j, op := range route.OnRequest {
+			compiled.OnRequest[j] = convertAction(op)
 
 			if op.Template != "" {
 				tmpl, err := template.New(fmt.Sprintf("%s_rule_%d_request_%d", prefix, i, j)).
@@ -48,15 +48,15 @@ func compileRuleTemplates(rules []Rule, prefix string) error {
 					return fmt.Errorf("rule %d request operation %d: %w", i, j, err)
 				}
 				logger.Debug("Compiled request template", "scope", prefix, "rule_index", i, "operation_index", j)
-				opRule.OnRequestTemplates = append(opRule.OnRequestTemplates, tmpl)
+				compiled.OnRequestTemplates = append(compiled.OnRequestTemplates, tmpl)
 			} else {
-				opRule.OnRequestTemplates = append(opRule.OnRequestTemplates, nil)
+				compiled.OnRequestTemplates = append(compiled.OnRequestTemplates, nil)
 			}
 		}
 
 		// Convert OnResponse operations
-		for j, op := range rule.OnResponse {
-			opRule.OnResponse[j] = convertOperation(op)
+		for j, op := range route.OnResponse {
+			compiled.OnResponse[j] = convertAction(op)
 
 			if op.Template != "" {
 				tmpl, err := template.New(fmt.Sprintf("%s_rule_%d_response_%d", prefix, i, j)).
@@ -66,17 +66,17 @@ func compileRuleTemplates(rules []Rule, prefix string) error {
 					return fmt.Errorf("rule %d response operation %d: %w", i, j, err)
 				}
 				logger.Debug("Compiled response template", "scope", prefix, "rule_index", i, "operation_index", j)
-				opRule.OnResponseTemplates = append(opRule.OnResponseTemplates, tmpl)
+				compiled.OnResponseTemplates = append(compiled.OnResponseTemplates, tmpl)
 			} else {
-				opRule.OnResponseTemplates = append(opRule.OnResponseTemplates, nil)
+				compiled.OnResponseTemplates = append(compiled.OnResponseTemplates, nil)
 			}
 		}
 
-		rule.OpRule = opRule
+		route.Compiled = compiled
 	}
 	return nil
 }
 
-func convertOperation(op Operation) OperationExec {
-	return OperationExec(op)
+func convertAction(op Action) ActionExec {
+	return ActionExec(op)
 }

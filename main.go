@@ -100,7 +100,7 @@ func main() {
 	flag.Usage = func() {
 		fmt.Println("llama-matchmaker: Automatically apply optimal settings to LLM requests")
 		fmt.Println()
-		fmt.Println("Usage: llama-matchmaker -config <config.yml> [-config <rules.yml> ...]")
+		fmt.Println("Usage: llama-matchmaker -config <config.yml> [-config <routes.yml> ...]")
 		fmt.Println()
 		flag.PrintDefaults()
 		fmt.Println()
@@ -177,7 +177,7 @@ func CreateServer(cfg config.ProxyConfig, handler http.Handler) *http.Server {
 func startProxy(proxyCfg config.ProxyConfig) (*ProxyServer, error) {
 	proxyConfigForHandlers := &config.Config{
 		Proxies: []config.ProxyConfig{proxyCfg},
-		Rules:   proxyCfg.Rules,
+		Routes:  proxyCfg.Routes,
 	}
 
 	targetURLParsed, err := url.Parse(proxyCfg.Target)
@@ -318,7 +318,7 @@ func logResolvedConfig(cfg *config.Config) {
 		return
 	}
 
-	totalProxyRules := 0
+	totalProxyRoutes := 0
 	sslEnabled := 0
 
 	for i, p := range cfg.Proxies {
@@ -331,7 +331,7 @@ func logResolvedConfig(cfg *config.Config) {
 
 		reqOps := 0
 		respOps := 0
-		for _, r := range p.Rules {
+		for _, r := range p.Routes {
 			reqOps += len(r.OnRequest)
 			respOps += len(r.OnResponse)
 		}
@@ -340,11 +340,11 @@ func logResolvedConfig(cfg *config.Config) {
 			"listen", logListen,
 			"target", p.Target,
 			"timeout", p.Timeout,
-			"rules", len(p.Rules),
-			"request_ops", reqOps,
-			"response_ops", respOps,
+			"routes", len(p.Routes),
+			"request_actions", reqOps,
+			"response_actions", respOps,
 		)
-		totalProxyRules += len(p.Rules)
+		totalProxyRoutes += len(p.Routes)
 		if p.SSLCert != "" && p.SSLKey != "" {
 			sslEnabled++
 		}

@@ -7,7 +7,7 @@ proxy:
     # ssl_cert: "cert.pem"               # Enable both ssl_cert and ssl_key to serve HTTPS
     # ssl_key: "key.pem"
 
-    rules:
+    routes:
       - methods: POST
         paths: ^/v1/chat/completions$ # Match the standard chat endpoint
         # target_path: /api/chat         # Uncomment to rewrite to a different upstream path

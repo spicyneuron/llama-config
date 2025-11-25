@@ -21,13 +21,13 @@ func newPatternField(patterns ...string) config.PatternField {
 	return pf
 }
 
-func newTestConfig(target string, rules []config.Rule) *config.Config {
+func newTestConfig(target string, rules []config.Route) *config.Config {
 	return &config.Config{
 		Proxies: []config.ProxyConfig{{
 			Listen: "localhost:0",
 			Target: target,
 		}},
-		Rules: rules,
+		Routes: rules,
 	}
 }
 

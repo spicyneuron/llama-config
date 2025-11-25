@@ -35,12 +35,12 @@ func Validate(config *Config) error {
 		}
 		seenListeners[proxy.Listen] = struct{}{}
 
-		rules := proxy.Rules
-		if len(rules) == 0 {
-			rules = config.Rules
+		routes := proxy.Routes
+		if len(routes) == 0 {
+			routes = config.Routes
 		}
-		for j := range rules {
-			if err := validateRule(&rules[j], j); err != nil {
+		for j := range routes {
+			if err := validateRoute(&routes[j], j); err != nil {
 				return err
 			}
 		}
@@ -49,39 +49,39 @@ func Validate(config *Config) error {
 	return nil
 }
 
-func validateRule(rule *Rule, index int) error {
-	if rule.Methods.Len() == 0 {
-		return fmt.Errorf("match rule %d: methods required", index)
+func validateRoute(route *Route, index int) error {
+	if route.Methods.Len() == 0 {
+		return fmt.Errorf("route %d: methods required", index)
 	}
-	if rule.Paths.Len() == 0 {
-		return fmt.Errorf("match rule %d: paths required", index)
-	}
-
-	if len(rule.OnRequest) == 0 && len(rule.OnResponse) == 0 {
-		return fmt.Errorf("match rule %d: at least one operation required (on_request or on_response)", index)
+	if route.Paths.Len() == 0 {
+		return fmt.Errorf("route %d: paths required", index)
 	}
 
-	if rule.TargetPath != "" && !strings.HasPrefix(rule.TargetPath, "/") {
-		return fmt.Errorf("match rule %d: target_path must be absolute", index)
+	if len(route.OnRequest) == 0 && len(route.OnResponse) == 0 {
+		return fmt.Errorf("route %d: at least one action required (on_request or on_response)", index)
 	}
 
-	if err := rule.Methods.Validate(); err != nil {
-		return fmt.Errorf("match rule %d methods: %w", index, err)
-	}
-	if err := rule.Paths.Validate(); err != nil {
-		return fmt.Errorf("match rule %d paths: %w", index, err)
+	if route.TargetPath != "" && !strings.HasPrefix(route.TargetPath, "/") {
+		return fmt.Errorf("route %d: target_path must be absolute", index)
 	}
 
-	// Validate on_request operations
-	for opIdx, op := range rule.OnRequest {
-		if err := validateOperation(&op, index, opIdx, "on_request"); err != nil {
+	if err := route.Methods.Validate(); err != nil {
+		return fmt.Errorf("route %d methods: %w", index, err)
+	}
+	if err := route.Paths.Validate(); err != nil {
+		return fmt.Errorf("route %d paths: %w", index, err)
+	}
+
+	// Validate on_request actions
+	for opIdx, op := range route.OnRequest {
+		if err := validateAction(&op, index, opIdx, "on_request"); err != nil {
 			return err
 		}
 	}
 
-	// Validate on_response operations
-	for opIdx, op := range rule.OnResponse {
-		if err := validateOperation(&op, index, opIdx, "on_response"); err != nil {
+	// Validate on_response actions
+	for opIdx, op := range route.OnResponse {
+		if err := validateAction(&op, index, opIdx, "on_response"); err != nil {
 			return err
 		}
 	}
@@ -89,12 +89,12 @@ func validateRule(rule *Rule, index int) error {
 	return nil
 }
 
-func validateOperation(op *Operation, ruleIndex, opIndex int, opType string) error {
+func validateAction(op *Action, ruleIndex, opIndex int, opType string) error {
 	// Validate match_body patterns
 	for key := range op.MatchBody {
 		patterns := op.MatchBody[key]
 		if err := patterns.Validate(); err != nil {
-			return fmt.Errorf("rule %d %s %d match_body '%s': %w", ruleIndex, opType, opIndex, key, err)
+			return fmt.Errorf("route %d %s %d match_body '%s': %w", ruleIndex, opType, opIndex, key, err)
 		}
 		op.MatchBody[key] = patterns
 	}
@@ -103,18 +103,18 @@ func validateOperation(op *Operation, ruleIndex, opIndex int, opType string) err
 	for key := range op.MatchHeaders {
 		patterns := op.MatchHeaders[key]
 		if err := patterns.Validate(); err != nil {
-			return fmt.Errorf("rule %d %s %d match_headers '%s': %w", ruleIndex, opType, opIndex, key, err)
+			return fmt.Errorf("route %d %s %d match_headers '%s': %w", ruleIndex, opType, opIndex, key, err)
 		}
 		op.MatchHeaders[key] = patterns
 	}
 
-	// Template is a valid standalone operation
+	// Template is a valid standalone action
 	if op.Template != "" {
 		return nil
 	}
 
 	if len(op.Merge) == 0 && len(op.Default) == 0 && len(op.Delete) == 0 {
-		return fmt.Errorf("rule %d %s %d: must have at least one action (template, merge, default, or delete)", ruleIndex, opType, opIndex)
+		return fmt.Errorf("route %d %s %d: must have at least one action (template, merge, default, or delete)", ruleIndex, opType, opIndex)
 	}
 
 	return nil

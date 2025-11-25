@@ -33,17 +33,17 @@ llama-matchmaker --config example.config.yml
 
 Start from `examples/example.config.yml` for an annotated, OpenAI-compatible chat setup. At a glance:
 
-- Hierarchy: a `proxy` has ordered `rules`; each rule has ordered `operations`. All matching rules run; `on_response` runs for each matched rule in order.
+- Hierarchy: a `proxy` has ordered `routes`; each route has ordered `actions`. All matching routes run; `on_response` runs for each matched route in order.
 - Proxies live under `proxy:` (single map or list). Each has `listen` and `target`; optional `timeout` and `ssl_cert`/`ssl_key`.
-- Rules match with case-insensitive regex on method/path. `target_path` rewrites outbound paths. `on_request` processes JSON bodies; non-JSON bodies pass through untouched.
-- Reuse proxies, rules, or operations with `include:`; paths resolve relative to the file that references them.
-- Operations:
+- Routes match with case-insensitive regex on method/path. `target_path` rewrites outbound paths. `on_request` processes JSON bodies; non-JSON bodies pass through untouched.
+- Reuse proxies, routes, or actions with `include:`; paths resolve relative to the file that references them.
+- Actions:
   - `merge` (override fields)
   - `default` (set if missing)
   - `delete` (remove keys)
   - `template` (emit JSON with helpers like `toJson`, `default`, `uuid`, `now`, `add`, `mul`, `dict`, `index`, `kindIs`)
-  - `stop` (end remaining ops in the same rule)
-- Passing multiple `--config` files appends proxies and rules. CLI overrides for `listen/target/timeout/ssl-*` only work when exactly one proxy is defined.
+  - `stop` (end remaining actions in the same route)
+- Passing multiple `--config` files appends proxies and routes. CLI overrides for `listen/target/timeout/ssl-*` only work when exactly one proxy is defined.
 
 ## Development
 
