@@ -26,24 +26,24 @@ func TestModifyStreamingResponse_OllamaFormat(t *testing.T) {
 		Proxies: []config.ProxyConfig{{
 			Listen: "localhost:8080",
 			Target: "http://localhost:9000",
-		}},
-		Routes: []config.Route{
-			{
-				Methods:    config.PatternField{Patterns: []string{"POST"}},
-				Paths:      config.PatternField{Patterns: []string{"^/test$"}},
-				TargetPath: "/v1/test",
-				OnResponse: []config.Action{
-					{
-						MatchBody: map[string]config.PatternField{
-							"role": {Patterns: []string{".*"}},
-						},
-						Merge: map[string]any{
-							"transformed": true,
+			Routes: []config.Route{
+				{
+					Methods:    config.PatternField{Patterns: []string{"POST"}},
+					Paths:      config.PatternField{Patterns: []string{"^/test$"}},
+					TargetPath: "/v1/test",
+					OnResponse: []config.Action{
+						{
+							MatchBody: map[string]config.PatternField{
+								"role": {Patterns: []string{".*"}},
+							},
+							Merge: map[string]any{
+								"transformed": true,
+							},
 						},
 					},
 				},
 			},
-		},
+		}},
 	}
 
 	if err := config.Validate(cfg); err != nil {
@@ -73,7 +73,7 @@ func TestModifyStreamingResponse_OllamaFormat(t *testing.T) {
 	}
 
 	// Find matching rules
-	rules := FindMatchingRoutes(resp.Request, cfg)
+	rules := FindMatchingRoutes(resp.Request, cfg.Proxies[0].Routes)
 	if len(rules) == 0 {
 		t.Fatal("No matching rules found")
 	}
@@ -150,18 +150,18 @@ func TestModifyStreamingResponse_PassthroughNonJSON(t *testing.T) {
 		Proxies: []config.ProxyConfig{{
 			Listen: "localhost:8080",
 			Target: "http://localhost:9000",
-		}},
-		Routes: []config.Route{
-			{
-				Methods: config.PatternField{Patterns: []string{"GET"}},
-				Paths:   config.PatternField{Patterns: []string{"^/stream$"}},
-				OnResponse: []config.Action{
-					{
-						Merge: map[string]any{"test": "dummy"},
+			Routes: []config.Route{
+				{
+					Methods: config.PatternField{Patterns: []string{"GET"}},
+					Paths:   config.PatternField{Patterns: []string{"^/stream$"}},
+					OnResponse: []config.Action{
+						{
+							Merge: map[string]any{"test": "dummy"},
+						},
 					},
 				},
 			},
-		},
+		}},
 	}
 
 	if err := config.Validate(cfg); err != nil {
@@ -191,7 +191,7 @@ data: keep-alive
 		},
 	}
 
-	rules := FindMatchingRoutes(resp.Request, cfg)
+	rules := FindMatchingRoutes(resp.Request, cfg.Proxies[0].Routes)
 	if len(rules) == 0 {
 		t.Fatal("No matching rules found")
 	}
@@ -221,18 +221,18 @@ func TestModifyResponse_RoutesToStreaming(t *testing.T) {
 		Proxies: []config.ProxyConfig{{
 			Listen: "localhost:8080",
 			Target: "http://localhost:9000",
-		}},
-		Routes: []config.Route{
-			{
-				Methods: config.PatternField{Patterns: []string{"POST"}},
-				Paths:   config.PatternField{Patterns: []string{"^/api/chat$"}},
-				OnResponse: []config.Action{
-					{
-						Merge: map[string]any{"test": "value"},
+			Routes: []config.Route{
+				{
+					Methods: config.PatternField{Patterns: []string{"POST"}},
+					Paths:   config.PatternField{Patterns: []string{"^/api/chat$"}},
+					OnResponse: []config.Action{
+						{
+							Merge: map[string]any{"test": "value"},
+						},
 					},
 				},
 			},
-		},
+		}},
 	}
 
 	if err := config.Validate(cfg); err != nil {
@@ -280,7 +280,7 @@ func TestModifyResponse_RoutesToStreaming(t *testing.T) {
 			}
 
 			// Find and store matching rules in context
-			rules := FindMatchingRoutes(req, cfg)
+			rules := FindMatchingRoutes(req, cfg.Proxies[0].Routes)
 			if len(rules) == 0 {
 				t.Fatal("No matching rules")
 			}
@@ -291,7 +291,7 @@ func TestModifyResponse_RoutesToStreaming(t *testing.T) {
 			*req = *req.WithContext(ctx)
 
 			// Call ModifyResponse which should route correctly
-			err := ModifyResponse(resp, cfg)
+			err := ModifyResponse(resp, cfg.Proxies[0].Routes)
 			if err != nil {
 				t.Fatalf("ModifyResponse failed: %v", err)
 			}

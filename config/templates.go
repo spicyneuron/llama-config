@@ -9,11 +9,6 @@ import (
 
 // CompileTemplates compiles all template strings in routes
 func CompileTemplates(cfg *Config) error {
-	// Compile shared routes first
-	if err := compileRouteTemplates(cfg.Routes, "global"); err != nil {
-		return err
-	}
-
 	for i := range cfg.Proxies {
 		if len(cfg.Proxies[i].Routes) == 0 {
 			continue

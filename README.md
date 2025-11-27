@@ -43,7 +43,7 @@ Start from `examples/example.config.yml` for an annotated, OpenAI-compatible cha
   - `delete` (remove keys)
   - `template` (emit JSON with helpers like `toJson`, `default`, `uuid`, `now`, `add`, `mul`, `dict`, `index`, `kindIs`)
   - `stop` (end remaining actions in the current route)
-- Passing multiple `--config` files appends proxies and routes. CLI overrides for `listen/target/timeout/ssl-*` only work when exactly one proxy is defined.
+- Passing multiple `--config` files appends proxies. CLI overrides for `listen/target/timeout/ssl-*` only work when exactly one proxy is defined.
 
 ## Development
 

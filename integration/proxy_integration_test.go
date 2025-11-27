@@ -69,7 +69,7 @@ func TestEndToEndRequestModification(t *testing.T) {
 	originalDirector := rp.Director
 	rp.Director = func(req *http.Request) {
 		originalDirector(req)
-		proxy.ModifyRequest(req, cfg)
+		proxy.ModifyRequest(req, cfg.Proxies[0].Routes)
 	}
 
 	// Create test server with the proxy
@@ -146,23 +146,23 @@ func TestEndToEndResponseModification(t *testing.T) {
 		Proxies: []config.ProxyConfig{{
 			Listen: "localhost:8081",
 			Target: backend.URL,
-		}},
-		Routes: []config.Route{
-			{
-				Methods: newPatternField("POST"),
-				Paths:   newPatternField("/v1/chat/completions"),
-				OnRequest: []config.Action{
-					{Default: map[string]any{"temperature": 0.5}},
-				},
-				OnResponse: []config.Action{
-					{
-						Merge: map[string]any{
-							"processed_by": "llama-matchmaker",
+			Routes: []config.Route{
+				{
+					Methods: newPatternField("POST"),
+					Paths:   newPatternField("/v1/chat/completions"),
+					OnRequest: []config.Action{
+						{Default: map[string]any{"temperature": 0.5}},
+					},
+					OnResponse: []config.Action{
+						{
+							Merge: map[string]any{
+								"processed_by": "llama-matchmaker",
+							},
 						},
 					},
 				},
 			},
-		},
+		}},
 	}
 
 	// Validate and compile
@@ -180,11 +180,11 @@ func TestEndToEndResponseModification(t *testing.T) {
 	originalDirector := rp.Director
 	rp.Director = func(req *http.Request) {
 		originalDirector(req)
-		proxy.ModifyRequest(req, cfg)
+		proxy.ModifyRequest(req, cfg.Proxies[0].Routes)
 	}
 
 	rp.ModifyResponse = func(resp *http.Response) error {
-		return proxy.ModifyResponse(resp, cfg)
+		return proxy.ModifyResponse(resp, cfg.Proxies[0].Routes)
 	}
 
 	proxyServer := httptest.NewServer(rp)
@@ -271,7 +271,7 @@ func TestBodySizeLimit(t *testing.T) {
 
 	// The body will be read but truncated at 10MB
 	// This test just ensures we don't panic or run out of memory
-	proxy.ModifyRequest(req, cfg)
+	proxy.ModifyRequest(req, cfg.Proxies[0].Routes)
 
 	// If we get here without panic, the size limit is working
 	t.Log("Body size limit test passed (no panic on large body)")

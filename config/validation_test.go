@@ -18,16 +18,16 @@ func TestValidateConfig(t *testing.T) {
 				Proxies: ProxyEntries{{
 					Listen: "localhost:8081",
 					Target: "http://localhost:8080",
-				}},
-				Routes: []Route{
-					{
-						Methods: newPatternField("POST"),
-						Paths:   newPatternField("/v1/chat"),
-						OnRequest: []Action{
-							{Merge: map[string]any{"temperature": 0.7}},
+					Routes: []Route{
+						{
+							Methods: newPatternField("POST"),
+							Paths:   newPatternField("/v1/chat"),
+							OnRequest: []Action{
+								{Merge: map[string]any{"temperature": 0.7}},
+							},
 						},
 					},
-				},
+				}},
 			},
 			wantErr: false,
 		},
@@ -36,14 +36,14 @@ func TestValidateConfig(t *testing.T) {
 			config: &Config{
 				Proxies: ProxyEntries{{
 					Target: "http://localhost:8080",
-				}},
-				Routes: []Route{
-					{
-						Methods:   newPatternField("POST"),
-						Paths:     newPatternField("/v1/chat"),
-						OnRequest: []Action{{Merge: map[string]any{"temp": 0.7}}},
+					Routes: []Route{
+						{
+							Methods:   newPatternField("POST"),
+							Paths:     newPatternField("/v1/chat"),
+							OnRequest: []Action{{Merge: map[string]any{"temp": 0.7}}},
+						},
 					},
-				},
+				}},
 			},
 			wantErr: true,
 			errMsg:  "proxy[0].listen is required",
@@ -53,14 +53,14 @@ func TestValidateConfig(t *testing.T) {
 			config: &Config{
 				Proxies: ProxyEntries{{
 					Listen: "localhost:8081",
-				}},
-				Routes: []Route{
-					{
-						Methods:   newPatternField("POST"),
-						Paths:     newPatternField("/v1/chat"),
-						OnRequest: []Action{{Merge: map[string]any{"temp": 0.7}}},
+					Routes: []Route{
+						{
+							Methods:   newPatternField("POST"),
+							Paths:     newPatternField("/v1/chat"),
+							OnRequest: []Action{{Merge: map[string]any{"temp": 0.7}}},
+						},
 					},
-				},
+				}},
 			},
 			wantErr: true,
 			errMsg:  "proxy[0].target is required",
@@ -71,14 +71,14 @@ func TestValidateConfig(t *testing.T) {
 				Proxies: ProxyEntries{{
 					Listen: "localhost:8081",
 					Target: "://invalid",
-				}},
-				Routes: []Route{
-					{
-						Methods:   newPatternField("POST"),
-						Paths:     newPatternField("/v1/chat"),
-						OnRequest: []Action{{Merge: map[string]any{"temp": 0.7}}},
+					Routes: []Route{
+						{
+							Methods:   newPatternField("POST"),
+							Paths:     newPatternField("/v1/chat"),
+							OnRequest: []Action{{Merge: map[string]any{"temp": 0.7}}},
+						},
 					},
-				},
+				}},
 			},
 			wantErr: true,
 			errMsg:  "proxy[0].target URL is invalid",
@@ -90,14 +90,14 @@ func TestValidateConfig(t *testing.T) {
 					Listen:  "localhost:8081",
 					Target:  "http://localhost:8080",
 					SSLCert: "cert.pem",
-				}},
-				Routes: []Route{
-					{
-						Methods:   newPatternField("POST"),
-						Paths:     newPatternField("/v1/chat"),
-						OnRequest: []Action{{Merge: map[string]any{"temp": 0.7}}},
+					Routes: []Route{
+						{
+							Methods:   newPatternField("POST"),
+							Paths:     newPatternField("/v1/chat"),
+							OnRequest: []Action{{Merge: map[string]any{"temp": 0.7}}},
+						},
 					},
-				},
+				}},
 			},
 			wantErr: true,
 			errMsg:  "both ssl_cert and ssl_key must be provided together",
@@ -109,14 +109,14 @@ func TestValidateConfig(t *testing.T) {
 					Listen: "localhost:8081",
 					Target: "http://localhost:8080",
 					SSLKey: "key.pem",
-				}},
-				Routes: []Route{
-					{
-						Methods:   newPatternField("POST"),
-						Paths:     newPatternField("/v1/chat"),
-						OnRequest: []Action{{Merge: map[string]any{"temp": 0.7}}},
+					Routes: []Route{
+						{
+							Methods:   newPatternField("POST"),
+							Paths:     newPatternField("/v1/chat"),
+							OnRequest: []Action{{Merge: map[string]any{"temp": 0.7}}},
+						},
 					},
-				},
+				}},
 			},
 			wantErr: true,
 			errMsg:  "both ssl_cert and ssl_key must be provided together",
@@ -140,14 +140,25 @@ func TestValidateConfig(t *testing.T) {
 func TestValidateDuplicateListeners(t *testing.T) {
 	cfg := &Config{
 		Proxies: ProxyEntries{
-			{Listen: "localhost:8081", Target: "http://t1"},
-			{Listen: "localhost:8081", Target: "http://t2"},
-		},
-		Routes: []Route{
 			{
-				Methods:   newPatternField("GET"),
-				Paths:     newPatternField("/"),
-				OnRequest: []Action{{Merge: map[string]any{"x": 1}}},
+				Listen: "localhost:8081", Target: "http://t1",
+				Routes: []Route{
+					{
+						Methods:   newPatternField("GET"),
+						Paths:     newPatternField("/"),
+						OnRequest: []Action{{Merge: map[string]any{"x": 1}}},
+					},
+				},
+			},
+			{
+				Listen: "localhost:8081", Target: "http://t2",
+				Routes: []Route{
+					{
+						Methods:   newPatternField("GET"),
+						Paths:     newPatternField("/"),
+						OnRequest: []Action{{Merge: map[string]any{"x": 1}}},
+					},
+				},
 			},
 		},
 	}
@@ -161,13 +172,15 @@ func TestValidateDuplicateListeners(t *testing.T) {
 func TestValidateOnResponseOnlyRoutes(t *testing.T) {
 	cfg := &Config{
 		Proxies: ProxyEntries{
-			{Listen: "localhost:8081", Target: "http://t1"},
-		},
-		Routes: []Route{
 			{
-				Methods:    newPatternField("GET"),
-				Paths:      newPatternField("/ok"),
-				OnResponse: []Action{{Merge: map[string]any{"processed": true}}},
+				Listen: "localhost:8081", Target: "http://t1",
+				Routes: []Route{
+					{
+						Methods:    newPatternField("GET"),
+						Paths:      newPatternField("/ok"),
+						OnResponse: []Action{{Merge: map[string]any{"processed": true}}},
+					},
+				},
 			},
 		},
 	}

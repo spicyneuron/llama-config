@@ -15,7 +15,6 @@ import (
 // Config represents the full proxy configuration
 type Config struct {
 	Proxies ProxyEntries `yaml:"proxy"`
-	Routes  []Route      `yaml:"routes"`
 }
 
 type watchList struct {
@@ -218,8 +217,7 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, []string, erro
 			mergedConfig = &cfg
 		} else {
 			mergedConfig.Proxies = append(mergedConfig.Proxies, cfg.Proxies...)
-			mergedConfig.Routes = append(mergedConfig.Routes, cfg.Routes...)
-			logger.Debug("Merged config file", "path", configPath, "proxies_added", len(cfg.Proxies), "routes_added", len(cfg.Routes))
+			logger.Debug("Merged config file", "path", configPath, "proxies_added", len(cfg.Proxies))
 		}
 
 		loadFields = append(loadFields, fmt.Sprintf("config_%d", i+1), configPath)
@@ -262,11 +260,6 @@ func Load(configPaths []string, overrides CliOverrides) (*Config, []string, erro
 		if proxies[i].Timeout == 0 {
 			proxies[i].Timeout = 60 * time.Second
 			logger.Debug("Using default timeout for proxy", "index", i, "timeout", proxies[i].Timeout)
-		}
-
-		// If proxy has no routes, inherit shared routes
-		if len(proxies[i].Routes) == 0 && len(mergedConfig.Routes) > 0 {
-			proxies[i].Routes = append([]Route(nil), mergedConfig.Routes...)
 		}
 	}
 

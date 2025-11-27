@@ -42,13 +42,13 @@ func headersJSON(headers map[string][]string) string {
 }
 
 // FindMatchingRoutes returns all routes that match the request sequentially
-func FindMatchingRoutes(req *http.Request, cfg *config.Config) []*config.Route {
-	logger.Debug("Evaluating routes for request", "route_count", len(cfg.Routes), "method", req.Method, "path", req.URL.Path)
+func FindMatchingRoutes(req *http.Request, routes []config.Route) []*config.Route {
+	logger.Debug("Evaluating routes for request", "route_count", len(routes), "method", req.Method, "path", req.URL.Path)
 
 	var matchedRoutes []*config.Route
 
-	for i := range cfg.Routes {
-		route := &cfg.Routes[i]
+	for i := range routes {
+		route := &routes[i]
 		methodMatch := route.Methods.Matches(req.Method)
 		pathMatch := route.Paths.Matches(req.URL.Path)
 
@@ -71,7 +71,7 @@ func FindMatchingRoutes(req *http.Request, cfg *config.Config) []*config.Route {
 
 // ModifyRequest processes the request through rules sequentially
 // Each rule is checked and processed immediately before moving to the next rule
-func ModifyRequest(req *http.Request, cfg *config.Config) {
+func ModifyRequest(req *http.Request, routes []config.Route) {
 	method := req.Method
 	path := req.URL.Path
 	// Read and limit body size to 10MB to prevent memory exhaustion
@@ -130,8 +130,8 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 	matchedCount := 0
 
 	// Process rules sequentially: check and apply each rule before moving to next
-	for i := range cfg.Routes {
-		rule := &cfg.Routes[i]
+	for i := range routes {
+		rule := &routes[i]
 
 		// Check if this rule matches (method and path)
 		methodMatch := rule.Methods.Matches(req.Method)
@@ -214,7 +214,7 @@ func ModifyRequest(req *http.Request, cfg *config.Config) {
 }
 
 // ModifyResponse processes the response through matching routes
-func ModifyResponse(resp *http.Response, cfg *config.Config) error {
+func ModifyResponse(resp *http.Response, routes []config.Route) error {
 	method := resp.Request.Method
 	path := resp.Request.URL.Path
 	contentType := resp.Header.Get("Content-Type")

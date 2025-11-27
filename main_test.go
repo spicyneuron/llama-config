@@ -118,9 +118,8 @@ proxy:
   target: "http://example.com"
   ssl_cert: "`+filepath.Base(certPath)+`"
   ssl_key: "`+filepath.Base(keyPath)+`"
-
-rules:
-  - include: "`+filepath.Base(includePath)+`"
+  routes:
+    - include: "`+filepath.Base(includePath)+`"
 `); err != nil {
 		t.Fatalf("failed to write config: %v", err)
 	}

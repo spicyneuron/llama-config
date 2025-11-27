@@ -35,12 +35,11 @@ func Validate(config *Config) error {
 		}
 		seenListeners[proxy.Listen] = struct{}{}
 
-		routes := proxy.Routes
-		if len(routes) == 0 {
-			routes = config.Routes
+		if len(proxy.Routes) == 0 {
+			return fmt.Errorf("proxy[%d].routes is required", i)
 		}
-		for j := range routes {
-			if err := validateRoute(&routes[j], j); err != nil {
+		for j := range proxy.Routes {
+			if err := validateRoute(&proxy.Routes[j], j); err != nil {
 				return err
 			}
 		}

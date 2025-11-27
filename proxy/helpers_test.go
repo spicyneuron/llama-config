@@ -26,8 +26,8 @@ func newTestConfig(target string, rules []config.Route) *config.Config {
 		Proxies: []config.ProxyConfig{{
 			Listen: "localhost:0",
 			Target: target,
+			Routes: rules,
 		}},
-		Routes: rules,
 	}
 }
 

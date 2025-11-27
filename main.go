@@ -175,11 +175,6 @@ func CreateServer(cfg config.ProxyConfig, handler http.Handler) *http.Server {
 }
 
 func startProxy(proxyCfg config.ProxyConfig) (*ProxyServer, error) {
-	proxyConfigForHandlers := &config.Config{
-		Proxies: []config.ProxyConfig{proxyCfg},
-		Routes:  proxyCfg.Routes,
-	}
-
 	targetURLParsed, err := url.Parse(proxyCfg.Target)
 	if err != nil {
 		return nil, fmt.Errorf("invalid target URL: %w", err)
@@ -216,11 +211,11 @@ func startProxy(proxyCfg config.ProxyConfig) (*ProxyServer, error) {
 	originalDirector := reverseProxy.Director
 	reverseProxy.Director = func(req *http.Request) {
 		originalDirector(req)
-		proxy.ModifyRequest(req, proxyConfigForHandlers)
+		proxy.ModifyRequest(req, proxyCfg.Routes)
 	}
 
 	reverseProxy.ModifyResponse = func(resp *http.Response) error {
-		return proxy.ModifyResponse(resp, proxyConfigForHandlers)
+		return proxy.ModifyResponse(resp, proxyCfg.Routes)
 	}
 
 	server := CreateServer(proxyCfg, reverseProxy)

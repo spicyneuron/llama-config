@@ -29,10 +29,6 @@ func parseConfig(t *testing.T, yamlContent string) (*Config, error) {
 		if cfg.Proxies[i].Timeout == 0 {
 			cfg.Proxies[i].Timeout = 60 * time.Second
 		}
-		// Inherit shared routes if none set on the proxy
-		if len(cfg.Proxies[i].Routes) == 0 && len(cfg.Routes) > 0 {
-			cfg.Proxies[i].Routes = append([]Route(nil), cfg.Routes...)
-		}
 	}
 
 	if err := Validate(&cfg); err != nil {

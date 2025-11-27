@@ -41,12 +41,10 @@ func TestModifyResponseAppliesAllMatchedRules(t *testing.T) {
 		}
 	}
 
-	cfg := config.Config{Routes: rules}
-
 	req := httptest.NewRequest("POST", "http://example.com/v1/chat", bytes.NewBufferString(`{"original":true}`))
 	req.Header.Set("Content-Type", "application/json")
 
-	ModifyRequest(req, &cfg)
+	ModifyRequest(req, rules)
 
 	resp := &http.Response{
 		Request:    req,
@@ -55,7 +53,7 @@ func TestModifyResponseAppliesAllMatchedRules(t *testing.T) {
 		Body:       io.NopCloser(bytes.NewBufferString(`{"original":true}`)),
 	}
 
-	if err := ModifyResponse(resp, &cfg); err != nil {
+	if err := ModifyResponse(resp, rules); err != nil {
 		t.Fatalf("ModifyResponse error: %v", err)
 	}
 
