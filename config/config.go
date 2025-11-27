@@ -322,6 +322,7 @@ func loadConfigFile(configPath string, watchedFiles *watchList) (Config, error) 
 	return cfg, nil
 }
 
+// expandIncludes recursively inlines include nodes and tracks every referenced file for watching.
 func expandIncludes(node *yaml.Node, baseDir string, watchedFiles *watchList) error {
 	switch node.Kind {
 	case yaml.DocumentNode:

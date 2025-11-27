@@ -246,7 +246,6 @@ func startProxy(proxyCfg config.ProxyConfig) (*ProxyServer, error) {
 		config: proxyCfg,
 	}
 
-	// Log start before launching the server goroutine to keep ordering intuitive
 	logListen := proxyCfg.Listen
 	if proxyCfg.SSLCert != "" && proxyCfg.SSLKey != "" {
 		logListen = "https://" + logListen
@@ -439,6 +438,7 @@ func debounceReload() {
 		reloadTimer.Stop()
 	}
 
+	// Batch rapid fsnotify events so we only reload after a brief quiet period.
 	reloadTimer = time.AfterFunc(200*time.Millisecond, func() {
 		logger.Info("Config file changed, reloading...")
 		if reloadConfigFn != nil {

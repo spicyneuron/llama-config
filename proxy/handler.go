@@ -100,7 +100,6 @@ func ModifyRequest(req *http.Request, routes []config.Route) {
 		}
 	}
 
-	// Parse JSON body if present
 	var data map[string]any
 	hasJSONBody := false
 	if len(body) > 0 {
@@ -111,11 +110,9 @@ func ModifyRequest(req *http.Request, routes []config.Route) {
 				logger.Debug("Request body is not JSON, passing through unchanged")
 			}
 			req.Body = io.NopCloser(bytes.NewReader(body))
-			// Still check for matching rules that might modify path/headers
 		}
 	}
 
-	// Extract headers as map[string]string for matching
 	headers := make(map[string]string)
 	for key, values := range req.Header {
 		if len(values) > 0 {
@@ -123,17 +120,14 @@ func ModifyRequest(req *http.Request, routes []config.Route) {
 		}
 	}
 
-	// Track matched routes for response processing
 	var matchedResponseRoutes responseRouteContext
 	anyModified := false
 	allAppliedValues := make(map[string]any)
 	matchedCount := 0
 
-	// Process rules sequentially: check and apply each rule before moving to next
 	for i := range routes {
 		rule := &routes[i]
 
-		// Check if this rule matches (method and path)
 		methodMatch := rule.Methods.Matches(req.Method)
 		pathMatch := rule.Paths.Matches(req.URL.Path)
 
@@ -148,7 +142,6 @@ func ModifyRequest(req *http.Request, routes []config.Route) {
 		matchedResponseRoutes.rules = append(matchedResponseRoutes.rules, rule)
 		matchedResponseRoutes.indices = append(matchedResponseRoutes.indices, i)
 
-		// Handle target path rewriting
 		if rule.TargetPath != "" {
 			originalPath := req.URL.Path
 			if rule.TargetPath != originalPath {
@@ -157,17 +150,14 @@ func ModifyRequest(req *http.Request, routes []config.Route) {
 			}
 		}
 
-		// Skip body processing if no JSON body or no actions
 		if !hasJSONBody || len(rule.OnRequest) == 0 {
 			continue
 		}
 
-		// Apply actions to the current (possibly modified) data
 		modified, appliedValues := config.ProcessRequest(data, headers, rule.Compiled, i, method, path)
 
 		if modified {
 			anyModified = true
-			// Merge applied values for debug output
 			for k, v := range appliedValues {
 				allAppliedValues[k] = v
 			}
@@ -175,13 +165,11 @@ func ModifyRequest(req *http.Request, routes []config.Route) {
 
 	}
 
-	// Store the matching routes in context for response processing
 	if len(matchedResponseRoutes.rules) > 0 {
 		ctx := context.WithValue(req.Context(), routeContextKey, &matchedResponseRoutes)
 		*req = *req.WithContext(ctx)
 	}
 
-	// Write modified body back if JSON was processed
 	if hasJSONBody {
 		modifiedBody, err := json.Marshal(data)
 		if err != nil {
@@ -208,7 +196,6 @@ func ModifyRequest(req *http.Request, routes []config.Route) {
 			logger.Debug("Outbound request body", "body", string(finalBody))
 		}
 	} else if len(body) > 0 {
-		// Restore original non-JSON body
 		req.Body = io.NopCloser(bytes.NewReader(body))
 	}
 }
@@ -274,7 +261,6 @@ func ModifyResponse(resp *http.Response, routes []config.Route) error {
 		}
 	}
 
-	// Restore body for downstream use
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 	resp.ContentLength = int64(len(body))
 
@@ -283,7 +269,6 @@ func ModifyResponse(resp *http.Response, routes []config.Route) error {
 		return nil
 	}
 
-	// Skip if no response operations in any matched rule
 	hasResponseOps := false
 	for _, r := range matchedRoutes {
 		if len(r.OnResponse) > 0 {
@@ -296,7 +281,6 @@ func ModifyResponse(resp *http.Response, routes []config.Route) error {
 		return nil
 	}
 
-	// Skip if not JSON
 	if !strings.Contains(contentType, "application/json") {
 		logger.Info("Outbound response", "method", method, "path", path, "status", resp.StatusCode, "changes", 0, "reason", "non_json", "matched_routes", matchedRouteIndices, "content_type", contentType)
 		return nil
@@ -361,6 +345,7 @@ func ModifyResponse(resp *http.Response, routes []config.Route) error {
 }
 
 // ModifyStreamingResponse processes Server-Sent Events (SSE) line-by-line
+// ModifyStreamingResponse rewrites streaming responses for matched routes, handling both SSE (`data:`) lines and raw JSON chunks.
 func ModifyStreamingResponse(resp *http.Response, routes []*config.Route, routeIndices []int) error {
 	method := resp.Request.Method
 	path := resp.Request.URL.Path
@@ -372,14 +357,11 @@ func ModifyStreamingResponse(resp *http.Response, routes []*config.Route, routeI
 		}
 	}
 
-	// Create a pipe for streaming transformation
 	pipeReader, pipeWriter := io.Pipe()
 	originalBody := resp.Body
 
-	// Replace response body with pipe reader
 	resp.Body = pipeReader
 
-	// Start goroutine to transform and write to pipe
 	go func() {
 		defer pipeWriter.Close()
 		defer originalBody.Close()
@@ -389,7 +371,6 @@ func ModifyStreamingResponse(resp *http.Response, routes []*config.Route, routeI
 		logger.Info("Streaming response start", "method", method, "path", path)
 		logger.Debug("Initialized streaming scanner", "max_line_size", "1MB")
 
-		// Extract response headers for matching
 		headers := make(map[string]string)
 		for key, values := range resp.Header {
 			if len(values) > 0 {
@@ -422,12 +403,10 @@ func ModifyStreamingResponse(resp *http.Response, routes []*config.Route, routeI
 				continue
 			}
 
-			// Detect format and extract JSON
 			var jsonData []byte
 			var isSSE bool
 
 			if strings.HasPrefix(line, "data: ") {
-				// OpenAI SSE format: "data: {...}"
 				isSSE = true
 				jsonStr := strings.TrimPrefix(line, "data: ")
 
@@ -441,21 +420,17 @@ func ModifyStreamingResponse(resp *http.Response, routes []*config.Route, routeI
 
 				jsonData = []byte(jsonStr)
 			} else {
-				// Ollama raw JSON format
 				jsonData = []byte(line)
 			}
 
-			// Parse JSON chunk
 			var data map[string]any
 			if err := json.Unmarshal(jsonData, &data); err != nil {
-				// Not JSON, pass through unchanged
 				if _, err := pipeWriter.Write([]byte(line + "\n")); err != nil {
 					logger.Error("Failed to write non-JSON streaming line", "err", err)
 				}
 				continue
 			}
 
-			// Apply response transformations
 			modified := false
 			appliedValues := make(map[string]any)
 			for i, rule := range routes {
@@ -476,7 +451,6 @@ func ModifyStreamingResponse(resp *http.Response, routes []*config.Route, routeI
 				logger.Debug("Applied streaming chunk transformation", "line", lineNum, "changes", string(appliedJSON))
 			}
 
-			// Marshal back to JSON
 			modifiedJSON, err := json.Marshal(data)
 			if err != nil {
 				logger.Error("Failed to marshal modified streaming chunk", "err", err)
@@ -486,7 +460,6 @@ func ModifyStreamingResponse(resp *http.Response, routes []*config.Route, routeI
 				continue
 			}
 
-			// Write in original format
 			if isSSE {
 				if _, err := pipeWriter.Write([]byte("data: ")); err != nil {
 					return
