@@ -33,7 +33,7 @@ llama-matchmaker --config example.config.yml
 
 Start from `examples/example.config.yml` for an annotated, OpenAI-compatible chat setup. At a glance:
 
-- Hierarchy: a `proxy` has ordered `routes`; each route has ordered `actions` for both requests and responses. All matching routes and actions run in order. This layering lets you compose transforms (ex: Ollama → OpenAI compatibility) without duplicating effort.
+- Hierarchy: a `proxy` has ordered `routes`; each route has ordered actions (grouped under `on_request` and `on_response`). All matching routes and actions run in order. This layering lets you compose transforms (ex: Ollama → OpenAI compatibility) without duplicating effort.
 - Proxies live under `proxy:` (single map or list). Each has `listen` and `target`; optional `timeout` and `ssl_cert`/`ssl_key`.
 - Routes match with case-insensitive regex on method/path. `target_path` rewrites outbound paths. `on_request` processes JSON bodies; non-JSON bodies pass through untouched.
 - Reuse proxies, routes, or actions with `include:`; paths resolve relative to the file that references them.
