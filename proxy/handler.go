@@ -41,11 +41,12 @@ func headersJSON(headers map[string][]string) string {
 	return string(b)
 }
 
-// FindMatchingRoutes returns all routes that match the request sequentially
-func FindMatchingRoutes(req *http.Request, routes []config.Route) []*config.Route {
+// MatchRoutes returns matching routes and their indices in order.
+func MatchRoutes(req *http.Request, routes []config.Route) ([]*config.Route, []int) {
 	logger.Debug("Evaluating routes for request", "route_count", len(routes), "method", req.Method, "path", req.URL.Path)
 
 	var matchedRoutes []*config.Route
+	var matchedIndices []int
 
 	for i := range routes {
 		route := &routes[i]
@@ -57,6 +58,7 @@ func FindMatchingRoutes(req *http.Request, routes []config.Route) []*config.Rout
 		if methodMatch && pathMatch {
 			logger.Debug("Route matched", "index", i)
 			matchedRoutes = append(matchedRoutes, route)
+			matchedIndices = append(matchedIndices, i)
 		}
 	}
 
@@ -66,6 +68,12 @@ func FindMatchingRoutes(req *http.Request, routes []config.Route) []*config.Rout
 		logger.Debug("Matched routes for request", "count", len(matchedRoutes))
 	}
 
+	return matchedRoutes, matchedIndices
+}
+
+// FindMatchingRoutes returns all routes that match the request sequentially.
+func FindMatchingRoutes(req *http.Request, routes []config.Route) []*config.Route {
+	matchedRoutes, _ := MatchRoutes(req, routes)
 	return matchedRoutes
 }
 
@@ -120,33 +128,22 @@ func ModifyRequest(req *http.Request, routes []config.Route) {
 		}
 	}
 
+	matchedRoutes, matchedRouteIndices := MatchRoutes(req, routes)
 	var matchedResponseRoutes responseRouteContext
 	anyModified := false
 	allAppliedValues := make(map[string]any)
-	matchedCount := 0
 
-	for i := range routes {
-		rule := &routes[i]
+	for idx, rule := range matchedRoutes {
+		routeIndex := matchedRouteIndices[idx]
 
-		methodMatch := rule.Methods.Matches(req.Method)
-		pathMatch := rule.Paths.Matches(req.URL.Path)
-
-		if !methodMatch || !pathMatch {
-			logger.Debug("Route skipped", "index", i, "methods", rule.Methods.Patterns, "paths", rule.Paths.Patterns)
-			continue
-		}
-
-		logger.Debug("Route matched", "index", i, "methods", rule.Methods.Patterns, "paths", rule.Paths.Patterns)
-
-		matchedCount++
 		matchedResponseRoutes.rules = append(matchedResponseRoutes.rules, rule)
-		matchedResponseRoutes.indices = append(matchedResponseRoutes.indices, i)
+		matchedResponseRoutes.indices = append(matchedResponseRoutes.indices, routeIndex)
 
 		if rule.TargetPath != "" {
 			originalPath := req.URL.Path
 			if rule.TargetPath != originalPath {
 				req.URL.Path = rule.TargetPath
-				logger.Debug("Route path rewrite applied", "index", i, "from", originalPath, "to", rule.TargetPath)
+				logger.Debug("Route path rewrite applied", "index", routeIndex, "from", originalPath, "to", rule.TargetPath)
 			}
 		}
 
@@ -154,7 +151,7 @@ func ModifyRequest(req *http.Request, routes []config.Route) {
 			continue
 		}
 
-		modified, appliedValues := config.ProcessRequest(data, headers, rule.Compiled, i, method, path)
+		modified, appliedValues := config.ProcessRequest(data, headers, rule.Compiled, routeIndex, method, path)
 
 		if modified {
 			anyModified = true
@@ -186,7 +183,7 @@ func ModifyRequest(req *http.Request, routes []config.Route) {
 			"path", path,
 			"changes", len(allAppliedValues),
 		}
-		if matchedCount > 0 {
+		if len(matchedResponseRoutes.rules) > 0 {
 			fields = append(fields, "matched_routes", matchedResponseRoutes.indices)
 		}
 		logger.Info("Outbound request", fields...)
